@@ -1,5 +1,5 @@
-includes="."
-excludes="*.ipynb_checkpoints"
+includes="*.py"
+excludes="*.ipynb_checkpoints venv"
 
 extensions="@aquirdturtle/collapsible_headings @jupyterlab/toc @wallneradam/output_auto_scroll @wallneradam/run_all_buttons"
 
