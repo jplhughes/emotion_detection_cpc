@@ -1,0 +1,23 @@
+# core
+torch
+absl-py
+ffmpeg-python
+numpy
+torchaudio
+
+# dev
+matplotlib
+tensorboard
+
+# python notebooks
+jupyter
+jupyterlab-git
+jupyterlab
+nbdime
+
+# for linting and testing
+black
+flake8
+pre-commit
+pylint
+pytest
