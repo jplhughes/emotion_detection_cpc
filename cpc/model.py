@@ -1,7 +1,6 @@
 import torch
 from torch import nn
-from data.streaming import RawStream, FbankStream
-from body.body_wrapper import TrainedBody
+from dataloader.streaming import RawStream, FbankStream
 from util import mu_law_encoding, BatchNorm, device
 
 
@@ -196,20 +195,22 @@ class CPCModel(nn.Module):
         return output, hidden
 
 
-class TrainedCPC(TrainedBody):
+class TrainedCPC(nn.Module):
     """
     Body wrapper class to wrap a trained cpc body for benchmarking
     """
 
     def __init__(self, cpc_model):
-        feat_dim = cpc_model.hidden_size
         self.features_in = cpc_model.features_in
         if self.features_in == "raw":
             data_class = RawStream
         elif self.features_in == "fbank":
             data_class = FbankStream
 
-        super(TrainedCPC, self).__init__(feat_dim=feat_dim, data_class=data_class)
+        super().__init__()
+        self.feat_dim = cpc_model.hidden_size
+        self.data_class = data_class
+
         self.cpc_model = cpc_model
         self.hidden_state = None
 

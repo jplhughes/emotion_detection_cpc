@@ -5,5 +5,6 @@ __pycache__/
 venv/
 data/
 dataloader/
+models/
 cpc/scripts
 util.py

@@ -3,8 +3,8 @@ import numpy as np
 import torch
 from absl import flags, logging, app
 
-from body.research.cpc.model import CPCModel, TrainedCPC
-from data.streaming import (
+from cpc.model import CPCModel, TrainedCPC
+from dataloader.streaming import (
     RawStream,
     FbankStream,
     DblSampler,

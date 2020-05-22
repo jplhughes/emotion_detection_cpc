@@ -4,6 +4,7 @@ absl-py
 ffmpeg-python
 numpy
 torchaudio
+scipy
 
 # dev
 matplotlib
