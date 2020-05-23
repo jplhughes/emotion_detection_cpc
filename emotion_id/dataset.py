@@ -11,8 +11,8 @@ DblEntry = namedtuple("DblEntry", "audio_path emotion")
 def parse_emotion_dbl(dbl_path):
     dbl_entries = []
     with open(dbl_path) as in_f:
-        for l in in_f.readlines():
-            x, y = l.strip().split()
+        for line in in_f.readlines():
+            x, y = line.strip().split()
             if is_non_empty_file(x):
                 dbl_entries.append(DblEntry(audio_path=x, emotion_type=y))
     if not dbl_entries:

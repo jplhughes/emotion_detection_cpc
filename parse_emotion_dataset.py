@@ -96,7 +96,7 @@ if args.json:
 # save emotion set .txt
 with open(f"{args.output}/emotion_set.txt", "w") as fp:
     for emotion in emotion2class.values():
-        fp.write(f"emotion\n")
+        fp.write(f"{emotion}\n")
 
 # Save dbl files
 # 80:10:10 train val test split, two speakers are kept separate from training

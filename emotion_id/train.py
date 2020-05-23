@@ -1,4 +1,3 @@
-from functools import partial
 from math import inf
 import numpy as np
 from pathlib import Path
@@ -28,6 +27,7 @@ from util import (
     FlatCA,
     resample_1d,
     device,
+    setup_dry_run,
 )
 
 FLAGS = flags.FLAGS
@@ -97,6 +97,10 @@ def train(unused_argv):
     # setup logging
     tb_logger = prepare_tb_logging()
     prepare_standard_logging("training")
+    loss_dir = Path(f"{FLAGS.expdir}/losses")
+    loss_dir.mkdir(exist_ok=True)
+    train_losses_fh = open(loss_dir / "train.txt", "a")
+    valid_losses_fh = open(loss_dir / "valid.txt", "a")
 
     if FLAGS.dry_run is True:
         setup_dry_run(FLAGS)
@@ -108,6 +112,11 @@ def train(unused_argv):
     else:
         cpc = NoCPC()
     cpc.eval()
+
+    # write information about body into metadata
+    with open(f"{FLAGS.expdir}/metadata.txt", "a") as fh:
+        fh.write(f"sampling_rate_hz {cpc.data_class.SAMPLING_RATE_HZ}\n")
+        fh.write(f"feat_dim {cpc.feat_dim}\n")
 
     # define training data
     parsed_train_dbl = parse_emotion_dbl(FLAGS.train_data)
@@ -210,6 +219,10 @@ def train(unused_argv):
             break
 
     save(model, FLAGS.model_out)
+
+    # close loss logging file handles
+    train_losses_fh.close()
+    valid_losses_fh.close()
 
 
 if __name__ == "__main__":
