@@ -208,7 +208,7 @@ class TrainedCPC(nn.Module):
             data_class = FbankStream
 
         super().__init__()
-        self.feat_dim = cpc_model.hidden_size
+        self.feat_dim = cpc_model.out_size
         self.data_class = data_class
 
         self.cpc_model = cpc_model
@@ -250,3 +250,12 @@ class NoCPC(nn.Module):
 
     def forward(self, inp):
         return inp
+
+    def stash_state(self):
+        pass
+
+    def pop_state(self):
+        pass
+
+    def reset_state(self):
+        pass

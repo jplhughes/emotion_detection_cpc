@@ -7,4 +7,5 @@ data/
 dataloader/
 models/
 cpc/scripts
+emotion_id/scripts
 util.py

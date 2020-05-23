@@ -5,7 +5,7 @@ from dataloader.streaming import FbankStream, SingleFileStream
 from util import is_non_empty_file
 
 # presumption is one emotion for an entire audio file
-DblEntry = namedtuple("DblEntry", "audio_path emotion")
+DblEntry = namedtuple("DblEntry", "audio_path emotion_type")
 
 
 def parse_emotion_dbl(dbl_path):

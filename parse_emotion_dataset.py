@@ -35,16 +35,6 @@ emotion = {
 }
 intensity = {"01": "normal", "02": "strong"}
 statement = {"01": "Kids are talking by the door", "02": "Dogs are sitting by the door"}
-emotion2class = {
-    "neutral": 0,
-    "calm": 1,
-    "happy": 2,
-    "sad": 3,
-    "angry": 4,
-    "fearful": 5,
-    "disgust": 6,
-    "surprised": 7,
-}
 
 
 def parse_filename(filepath):
@@ -95,8 +85,8 @@ if args.json:
 
 # save emotion set .txt
 with open(f"{args.output}/emotion_set.txt", "w") as fp:
-    for emotion in emotion2class.values():
-        fp.write(f"{emotion}\n")
+    for emotion_type in emotion.values():
+        fp.write(f"{emotion_type}\n")
 
 # Save dbl files
 # 80:10:10 train val test split, two speakers are kept separate from training
@@ -113,21 +103,21 @@ val_class_counts = {k: 0 for k in emotion.values()}
 for filepath, meta in file_meta.items():
     if meta.actor in [23, 24]:
         if random() < 0.5:
-            val_dbl.write(f"{filepath} {emotion2class[meta.emotion]}\n")
+            val_dbl.write(f"{filepath} {meta.emotion}\n")
             val_class_counts[meta.emotion] += 1
         else:
-            test_dbl.write(f"{filepath} {emotion2class[meta.emotion]}\n")
+            test_dbl.write(f"{filepath} {meta.emotion}\n")
             test_class_counts[meta.emotion] += 1
     else:
         if random() < prob_not_train:
             if random() < 0.5:
-                val_dbl.write(f"{filepath} {emotion2class[meta.emotion]}\n")
+                val_dbl.write(f"{filepath} {meta.emotion}\n")
                 val_class_counts[meta.emotion] += 1
             else:
-                test_dbl.write(f"{filepath} {emotion2class[meta.emotion]}\n")
+                test_dbl.write(f"{filepath} {meta.emotion}\n")
                 test_class_counts[meta.emotion] += 1
         else:
-            train_dbl.write(f"{filepath} {emotion2class[meta.emotion]}\n")
+            train_dbl.write(f"{filepath} {meta.emotion}\n")
             train_class_counts[meta.emotion] += 1
 
 train_dbl.close()

@@ -109,6 +109,7 @@ def train(unused_argv):
 
     if FLAGS.cpc_path is not None:
         cpc = load_model(FLAGS.cpc_path).to(device)
+        cpc.reset_state()
     else:
         cpc = NoCPC()
     cpc.eval()
