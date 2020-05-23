@@ -93,6 +93,11 @@ if args.json:
     with open(f"{args.output}/metadata.json", "w") as fp:
         json.dump(file_dict, fp, indent=4)
 
+# save emotion set .txt
+with open(f"{args.output}/emotion_set.txt", "w") as fp:
+    for emotion in emotion2class.values():
+        fp.write(f"emotion\n")
+
 # Save dbl files
 # 80:10:10 train val test split, two speakers are kept separate from training
 train_dbl = open(f"{args.output}/train.dbl", "w")

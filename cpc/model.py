@@ -240,3 +240,13 @@ class TrainedCPC(nn.Module):
     def pop_state(self):
         self.hidden_state = self.state_stash
         self.state_stash = None
+
+
+class NoCPC(nn.Module):
+    def __init__(self, feat_dim=80, data_class=FbankStream):
+        super().__init__()
+        self.feat_dim = feat_dim
+        self.data_class = data_class
+
+    def forward(self, inp):
+        return inp
