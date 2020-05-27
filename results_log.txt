@@ -1,0 +1,18 @@
+Wed 27 May 2020
+
+Results for hidden model across different cpc features:
+
+==> 20200523_cpc_fbank_feedforward/score_summary.txt <==
+EmotionIDAccuracy 0.231561916977612 /home/johnh/git/emotion_detection_cpc/data/test_R.dbl
+
+==> 20200523_cpc_raw_feedforward/score_summary.txt <==
+EmotionIDAccuracy 0.36830696202531626 /home/johnh/git/emotion_detection_cpc/data/test_R.dbl
+
+==> 20200523_no_cpc_feedforward/score_summary.txt <==
+EmotionIDAccuracy 0.17787284281716428 /home/johnh/git/emotion_detection_cpc/data/test_R.dbl
+
+Not great initial results...
+- plan is to look at confusion matrices and f1 scores over each emotion.
+- in addition, I want to look at a rnn and wavenet style head to incorporate some extra context.
+- furthermore, normalisation of the output cpc features may help
+
