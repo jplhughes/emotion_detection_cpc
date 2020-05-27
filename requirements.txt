@@ -5,6 +5,7 @@ ffmpeg-python
 numpy
 torchaudio
 scipy
+pyannote.metrics
 
 # dev
 matplotlib
