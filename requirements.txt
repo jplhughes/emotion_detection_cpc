@@ -10,6 +10,7 @@ pyannote.metrics
 # dev
 matplotlib
 tensorboard
+seaborn
 
 # python notebooks
 jupyter

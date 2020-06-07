@@ -16,3 +16,35 @@ Not great initial results...
 - in addition, I want to look at a rnn and wavenet style head to incorporate some extra context.
 - furthermore, normalisation of the output cpc features may help
 
+
+For cpc raw features:
+
+F1 scores:
+neutral, 0.049
+calm, 0.549
+happy, 0.266
+sad, 0.228
+angry, 0.566
+fearful, 0.335
+disgust, 0.349
+surprised, 0.334
+
+Confusion matrix:
+[[  90  838  297 1171   60  216  325  393]
+ [  33 3903  403  942  330  324  854  555]
+ [   4  292 1408  812  464  890  760 1832]
+ [  81  573  704 1381  280  423 1266  788]
+ [   2  120  276  416 3696  359  699  966]
+ [   0  433  479  725  377 1845  588 1403]
+ [   3  343  285  660  992  655 2592 1118]
+ [  62  381  282  511  338  448 1105 2549]]
+ 
+
+It is trigger happy on calm
+
+Combine to categories to get "rage" detector:
+
+Content: neutral, calm, happy, surprised
+Enraged: sad, angry, fearful, disgust
+
+This is simplify the problem hugely and should be possible given the limited amount of data.
