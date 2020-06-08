@@ -8,7 +8,12 @@ from torch import save
 import torch.nn.functional as F
 from torch.nn.utils import clip_grad_norm_
 
-from emotion_id.model import MLPEmotionIDModel, LinearEmotionIDModel
+from emotion_id.model import (
+    MLPEmotionIDModel,
+    LinearEmotionIDModel,
+    RecurrentEmotionIDModel,
+    WaveNetEmotionIDModel,
+)
 from emotion_id.dataset import (
     EmotionIDSingleFileStream,
     parse_emotion_dbl,
@@ -38,7 +43,9 @@ flags.DEFINE_string("emotion_set_path", None, "path to smotion set")
 
 flags.DEFINE_string("cpc_path", None, "path to cpc model to use")
 flags.DEFINE_string("model_out", None, "path to where to save trained model")
-flags.DEFINE_enum("model", "feedforward", ["feedforward", "linear"], "The model type")
+flags.DEFINE_enum(
+    "model", "mlp2", ["linear", "mlp2", "mlp4", "rnn", "wavenet"], "The model type"
+)
 
 flags.DEFINE_integer("window_size", 2048, "num frames to push into model at once")
 flags.DEFINE_integer(
@@ -158,12 +165,26 @@ def train(unused_argv):
 
     if FLAGS.model == "linear":
         model = LinearEmotionIDModel(feat_dim, num_emotions).to(device)
-    elif FLAGS.model == "feedforward":
-        model = MLPEmotionIDModel(feat_dim, num_emotions).to(device)
+    elif FLAGS.model == "mlp2":
+        model = MLPEmotionIDModel(feat_dim, num_emotions, no_layers=2).to(device)
+    elif FLAGS.model == "mlp4":
+        model = MLPEmotionIDModel(feat_dim, num_emotions, no_layers=4).to(device)
+    elif FLAGS.model == "rnn":
+        rnn_config = {"hidden_size": 512, "num_layers": 2, "dropout": 0}
+        model = RecurrentEmotionIDModel(
+            feat_dim=feat_dim, num_emotions=num_emotions, **rnn_config
+        ).to(device)
+    elif FLAGS.model == "wavenet":
+        model = WaveNetEmotionIDModel(feat_dim, num_emotions).to(device)
+        padding_percentage = 100 * model.max_padding / FLAGS.window_size
+        logging.info(
+            f"max padding {model.max_padding}, percentage {padding_percentage}%"
+        )
+        logging.info(f"receptve field {model.receptive_field}")
     else:
         raise NameError("Model name not found")
 
-    logging.info(f"num classes {num_emotions}")
+    logging.info(f"number of classes {num_emotions}")
     logging.info(f"model param count {sum(x.numel() for x in model.parameters()):,}")
 
     optimizer = RAdam(model.parameters(), eps=1e-05, lr=FLAGS.lr)
