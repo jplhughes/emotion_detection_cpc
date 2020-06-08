@@ -1,5 +1,4 @@
 from torch import nn
-import torch
 from math import ceil
 from emotion_id.wavenet import Conv1dMasked, Conv1dSamePadding, ResidualStack
 from util import GlobalNormalization
@@ -37,34 +36,40 @@ class LinearEmotionIDModel(nn.Module):
 
 
 class RecurrentEmotionIDModel(nn.Module):
-    def __init__(self, feat_dim, hidden_size, num_layers, num_emotions, dropout):
+    def __init__(
+        self,
+        feat_dim,
+        num_emotions,
+        hidden_size=512,
+        num_layers=2,
+        bidirectional=False,
+        dropout=0,
+    ):
         super().__init__()
+        num_directions = 2 if bidirectional else 1
+
         self.normalize = GlobalNormalization(feat_dim, scale=False)
-        self.hidden_size = hidden_size
-        self.num_layers = num_layers
-        self.hidden_state = torch.zeros((1, self.num_layers, self.hidden_size))
-        self.num_emotions = num_emotions
+        self.hidden_state = None
         self.gru = nn.GRU(
-            feat_dim, hidden_size, num_layers, batch_first=True, dropout=dropout
+            feat_dim,
+            hidden_size,
+            num_layers,
+            batch_first=True,
+            dropout=dropout,
+            bidirectional=bidirectional,
         )
-        self.linear = nn.Linear(hidden_size, num_emotions)
-
-    def reset_state(self, batch_size=1):
-        self.hidden_state = torch.zeros(
-            (self.num_layers, batch_size, self.hidden_size)
-        ).to(self.hidden_state.device)
-
-    def to(self, *args):
-        self.hidden_state = self.hidden_state.to(*args)
-        return super().to(*args)
+        self.linear = nn.Linear(hidden_size * num_directions, num_emotions)
 
     def forward(self, x):
         x = self.normalize(x)
-        batch_size, window_size, feat_dim = x.shape
-        if batch_size != self.hidden_state.shape[0]:
-            self.reset_state(batch_size)
 
-        x, self.hidden_state = self.gru(x, self.hidden_state.detach())
+        if self.hidden_state is not None:
+            self.hidden_state = self.hidden_state.detach()
+
+            if x.shape[0] != self.hidden_state.shape[0]:
+                self.hidden_state = None
+
+        x, self.hidden_state = self.gru(x, self.hidden_state)
         return self.linear(x)
 
 

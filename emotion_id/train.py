@@ -173,19 +173,12 @@ def train(unused_argv):
     elif FLAGS.model == "mlp4":
         model = MLPEmotionIDModel(feat_dim, num_emotions, no_layers=4).to(device)
     elif FLAGS.model == "rnn":
-        rnn_config = {"hidden_size": 512, "num_layers": 2, "dropout": 0}
         model = RecurrentEmotionIDModel(
-            feat_dim=feat_dim, num_emotions=num_emotions, **rnn_config
+            feat_dim=feat_dim, num_emotions=num_emotions, bidirectional=False
         ).to(device)
     elif FLAGS.model == "rnn_bi":
-        rnn_config = {
-            "hidden_size": 512,
-            "num_layers": 2,
-            "dropout": 0,
-            "bidirectional": True,
-        }
         model = RecurrentEmotionIDModel(
-            feat_dim=feat_dim, num_emotions=num_emotions, **rnn_config
+            feat_dim=feat_dim, num_emotions=num_emotions, bidirectional=True
         ).to(device)
     elif FLAGS.model == "wavenet":
         model = WaveNetEmotionIDModel(feat_dim, num_emotions).to(device)
