@@ -44,7 +44,10 @@ flags.DEFINE_string("emotion_set_path", None, "path to smotion set")
 flags.DEFINE_string("cpc_path", None, "path to cpc model to use")
 flags.DEFINE_string("model_out", None, "path to where to save trained model")
 flags.DEFINE_enum(
-    "model", "mlp2", ["linear", "mlp2", "mlp4", "rnn", "wavenet"], "The model type"
+    "model",
+    "mlp2",
+    ["linear", "mlp2", "mlp4", "rnn", "rnn_bi", "wavenet", "wavenet_unmasked"],
+    "The model type",
 )
 
 flags.DEFINE_integer("window_size", 2048, "num frames to push into model at once")
@@ -174,8 +177,25 @@ def train(unused_argv):
         model = RecurrentEmotionIDModel(
             feat_dim=feat_dim, num_emotions=num_emotions, **rnn_config
         ).to(device)
+    elif FLAGS.model == "rnn_bi":
+        rnn_config = {
+            "hidden_size": 512,
+            "num_layers": 2,
+            "dropout": 0,
+            "bidirectional": True,
+        }
+        model = RecurrentEmotionIDModel(
+            feat_dim=feat_dim, num_emotions=num_emotions, **rnn_config
+        ).to(device)
     elif FLAGS.model == "wavenet":
         model = WaveNetEmotionIDModel(feat_dim, num_emotions).to(device)
+        padding_percentage = 100 * model.max_padding / FLAGS.window_size
+        logging.info(
+            f"max padding {model.max_padding}, percentage {padding_percentage}%"
+        )
+        logging.info(f"receptve field {model.receptive_field}")
+    elif FLAGS.model == "wavenet_unmasked":
+        model = WaveNetEmotionIDModel(feat_dim, num_emotions, masked=False).to(device)
         padding_percentage = 100 * model.max_padding / FLAGS.window_size
         logging.info(
             f"max padding {model.max_padding}, percentage {padding_percentage}%"
