@@ -5,16 +5,21 @@ from util import GlobalNormalization
 
 
 class MLPEmotionIDModel(nn.Module):
-    def __init__(self, input_dim, output_classes, no_layers=2, hidden_size=1024):
+    def __init__(
+        self, input_dim, output_classes, no_layers=2, hidden_size=1024,
+    ):
         super().__init__()
         assert no_layers > 1
         blocks = [
             GlobalNormalization(input_dim, scale=False),
             nn.Linear(input_dim, hidden_size),
             nn.ReLU(),
+            nn.Dropout(p=0.25),
         ]
         for _ in range(no_layers - 2):
-            blocks.extend([nn.Linear(hidden_size, hidden_size), nn.ReLU()])
+            blocks.extend(
+                [nn.Linear(hidden_size, hidden_size), nn.ReLU(), nn.Dropout(p=0.25),]
+            )
         blocks.append(nn.Linear(hidden_size, output_classes))
         self.blocks = nn.Sequential(*blocks)
 
@@ -43,7 +48,7 @@ class RecurrentEmotionIDModel(nn.Module):
         hidden_size=512,
         num_layers=2,
         bidirectional=False,
-        dropout=0,
+        dropout=0.25,
     ):
         super().__init__()
         num_directions = 2 if bidirectional else 1
