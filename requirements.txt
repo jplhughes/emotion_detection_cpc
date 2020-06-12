@@ -6,6 +6,7 @@ numpy
 torchaudio
 scipy
 pyannote.metrics
+pysndfx
 
 # dev
 matplotlib

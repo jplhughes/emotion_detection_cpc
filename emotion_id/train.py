@@ -10,6 +10,7 @@ from torch.nn.utils import clip_grad_norm_
 
 from emotion_id.model import (
     MLPEmotionIDModel,
+    ConvEmotionIDModel,
     LinearEmotionIDModel,
     RecurrentEmotionIDModel,
     WaveNetEmotionIDModel,
@@ -19,7 +20,7 @@ from emotion_id.dataset import (
     parse_emotion_dbl,
     get_emotion_to_id_mapping,
 )
-from dataloader.streaming import MultiStreamDataLoader, DblStream, DblSampler
+from dataloader.streaming import MultiStreamDataLoader, DblStream, DblSampler, RawStream
 from cpc.model import NoCPC
 
 from util import (
@@ -46,7 +47,7 @@ flags.DEFINE_string("model_out", None, "path to where to save trained model")
 flags.DEFINE_enum(
     "model",
     "mlp2",
-    ["linear", "mlp2", "mlp4", "rnn", "rnn_bi", "wavenet", "wavenet_unmasked"],
+    ["linear", "mlp2", "mlp4", "conv", "rnn", "rnn_bi", "wavenet", "wavenet_unmasked"],
     "The model type",
 )
 
@@ -55,7 +56,8 @@ flags.DEFINE_integer(
     "batch_size", None, "batch size, num parallel streams to train on at once"
 )
 flags.DEFINE_integer("steps", None, "number of train steps before breaking")
-
+flags.DEFINE_integer("hidden_size", 1024, "hidden size for models")
+flags.DEFINE_float("dropout_prob", 0.2, "dropout probability")
 flags.DEFINE_float("lr", 4e-4, "learning rate")
 flags.DEFINE_float("clip_thresh", 1.0, "value to clip gradients to")
 
@@ -150,8 +152,8 @@ def train(unused_argv):
             EmotionIDSingleFileStream,
             FLAGS.window_size,
             emotion_set_path=FLAGS.emotion_set_path,
-            audiostream_class=cpc.data_class,
-        )
+            audiostream_class=RawStream,
+        )  # TODO change back of use fbanks cpc.data_class,
         for _ in range(FLAGS.batch_size)
     ]
     valid_datastream = MultiStreamDataLoader(val_streams, device=device)
@@ -169,16 +171,44 @@ def train(unused_argv):
     if FLAGS.model == "linear":
         model = LinearEmotionIDModel(feat_dim, num_emotions).to(device)
     elif FLAGS.model == "mlp2":
-        model = MLPEmotionIDModel(feat_dim, num_emotions, no_layers=2).to(device)
+        model = MLPEmotionIDModel(
+            feat_dim,
+            num_emotions,
+            no_layers=2,
+            hidden_size=FLAGS.hidden_size,
+            dropout_prob=FLAGS.dropout_prob,
+        ).to(device)
     elif FLAGS.model == "mlp4":
-        model = MLPEmotionIDModel(feat_dim, num_emotions, no_layers=4).to(device)
+        model = MLPEmotionIDModel(
+            feat_dim,
+            num_emotions,
+            no_layers=4,
+            hidden_size=FLAGS.hidden_size,
+            dropout_prob=FLAGS.dropout_prob,
+        ).to(device)
+    elif FLAGS.model == "conv":
+        model = ConvEmotionIDModel(
+            feat_dim,
+            num_emotions,
+            no_layers=4,
+            hidden_size=FLAGS.hidden_size,
+            dropout_prob=FLAGS.dropout_prob,
+        ).to(device)
     elif FLAGS.model == "rnn":
         model = RecurrentEmotionIDModel(
-            feat_dim=feat_dim, num_emotions=num_emotions, bidirectional=False
+            feat_dim=feat_dim,
+            num_emotions=num_emotions,
+            bidirectional=False,
+            hidden_size=FLAGS.hidden_size,
+            dropout_prob=FLAGS.dropout_prob,
         ).to(device)
     elif FLAGS.model == "rnn_bi":
         model = RecurrentEmotionIDModel(
-            feat_dim=feat_dim, num_emotions=num_emotions, bidirectional=True
+            feat_dim=feat_dim,
+            num_emotions=num_emotions,
+            bidirectional=True,
+            hidden_size=FLAGS.hidden_size,
+            dropout_prob=FLAGS.dropout_prob,
         ).to(device)
     elif FLAGS.model == "wavenet":
         model = WaveNetEmotionIDModel(feat_dim, num_emotions).to(device)
