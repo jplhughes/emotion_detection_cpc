@@ -52,9 +52,7 @@ flags.DEFINE_enum(
 )
 
 flags.DEFINE_integer("window_size", 2048, "num frames to push into model at once")
-flags.DEFINE_integer(
-    "batch_size", None, "batch size, num parallel streams to train on at once"
-)
+flags.DEFINE_integer("batch_size", None, "batch size, num parallel streams to train on at once")
 flags.DEFINE_integer("steps", None, "number of train steps before breaking")
 flags.DEFINE_integer("hidden_size", 1024, "hidden size for models")
 flags.DEFINE_float("dropout_prob", 0.2, "dropout probability")
@@ -66,11 +64,10 @@ flags.DEFINE_integer("val_every", None, "how often to perform validation")
 flags.DEFINE_integer("save_every", None, "save every n steps")
 
 flags.DEFINE_boolean(
-    "lr_schedule",
-    False,
-    "state if an learning rate scheduler is required during training",
+    "lr_schedule", False, "state if an learning rate scheduler is required during training",
 )
 flags.DEFINE_boolean("dry_run", False, "dry run")
+flags.DEFINE_boolean("batch_norm", False, "batch_norm")
 
 
 flags.mark_flag_as_required("emotion_set_path")
@@ -177,6 +174,7 @@ def train(unused_argv):
             no_layers=2,
             hidden_size=FLAGS.hidden_size,
             dropout_prob=FLAGS.dropout_prob,
+            batch_norm_on=FLAGS.batch_norm,
         ).to(device)
     elif FLAGS.model == "mlp4":
         model = MLPEmotionIDModel(
@@ -185,6 +183,7 @@ def train(unused_argv):
             no_layers=4,
             hidden_size=FLAGS.hidden_size,
             dropout_prob=FLAGS.dropout_prob,
+            batch_norm_on=FLAGS.batch_norm,
         ).to(device)
     elif FLAGS.model == "conv":
         model = ConvEmotionIDModel(
@@ -213,16 +212,12 @@ def train(unused_argv):
     elif FLAGS.model == "wavenet":
         model = WaveNetEmotionIDModel(feat_dim, num_emotions).to(device)
         padding_percentage = 100 * model.max_padding / FLAGS.window_size
-        logging.info(
-            f"max padding {model.max_padding}, percentage {padding_percentage}%"
-        )
+        logging.info(f"max padding {model.max_padding}, percentage {padding_percentage}%")
         logging.info(f"receptve field {model.receptive_field}")
     elif FLAGS.model == "wavenet_unmasked":
         model = WaveNetEmotionIDModel(feat_dim, num_emotions, masked=False).to(device)
         padding_percentage = 100 * model.max_padding / FLAGS.window_size
-        logging.info(
-            f"max padding {model.max_padding}, percentage {padding_percentage}%"
-        )
+        logging.info(f"max padding {model.max_padding}, percentage {padding_percentage}%")
         logging.info(f"receptve field {model.receptive_field}")
     else:
         raise NameError("Model name not found")

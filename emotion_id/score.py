@@ -34,18 +34,14 @@ def get_stats(refs, preds, emotion2id, acc_type):
     """
     cm = confusion_matrix(refs, preds)
     f1_scores = f1_score(refs, preds, average=None)
-    precisions, recalls, _, _ = precision_recall_fscore_support(
-        refs, preds, average=None
-    )
+    precisions, recalls, _, _ = precision_recall_fscore_support(refs, preds, average=None)
     acc = accuracy_score(refs, preds)
     print(f"Frame-wise accuracy: {acc:.4f}")
     results = {
         "accuracy": acc,
     }
 
-    for f1, precision, recall, emotion in zip(
-        f1_scores, precisions, recalls, emotion2id.keys()
-    ):
+    for f1, precision, recall, emotion in zip(f1_scores, precisions, recalls, emotion2id.keys()):
         print(f"{emotion}, precision={precision:.3f}, recall={recall:.3f}, f1={f1:.3f}")
         results[emotion] = {
             "precision": precision,
@@ -121,7 +117,7 @@ def score(unused_argv):
     results = overall_stats(FLAGS.ref, FLAGS.pred, FLAGS.emotion_set_path, FLAGS.single)
     print(json.dumps(results, indent=4))
     with open(f"{FLAGS.output}/score_results.json", "w") as outfile:
-        json.dump(results, outfile)
+        json.dump(results, outfile, indent=4)
 
 
 if __name__ == "__main__":

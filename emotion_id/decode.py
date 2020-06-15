@@ -18,7 +18,7 @@ flags.DEFINE_string("output_dir", None, "file path to dir to write output to")
 flags.DEFINE_string("cpc_path", None, "path to initial backbone weights to load")
 flags.DEFINE_string("model_path", None, "trained model")
 flags.DEFINE_integer("window_size", 1024, "num frames to push into model at once")
-flags.DEFINE_boolean("pad_input", True, "right pad inputs with zeros up to window size")
+flags.DEFINE_boolean("pad_input", False, "right pad inputs with zeros up to window size")
 
 flags.mark_flag_as_required("eval_file_path")
 flags.mark_flag_as_required("model_path")
@@ -104,15 +104,11 @@ def main(unused_argv):
     # Need the enumeration to ensure unique files
     for i, dbl_entry in enumerate(decode_dbl):
         filename = Path(dbl_entry.audio_path)
-        preds = decode_emotions_from_file(
-            filename.as_posix(), cpc, model, FLAGS.window_size
-        )
+        preds = decode_emotions_from_file(filename.as_posix(), cpc, model, FLAGS.window_size)
 
         with open(str(output_dir / filename.name) + "_" + str(i), "w") as out_f:
             for pred in preds:
-                out_f.write(
-                    "{:.3f} {:.3f} {}\n".format(pred.start, pred.end, pred.label)
-                )
+                out_f.write("{:.3f} {:.3f} {}\n".format(pred.start, pred.end, pred.label))
 
         with open(output_dir / "score.dbl", "a") as dbl_fh:
             dbl_fh.write(str(output_dir / filename.name) + "_" + str(i) + "\n")

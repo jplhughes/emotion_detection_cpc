@@ -1,4 +1,4 @@
-includes="."
+includes="cpc dataloader emotion_id *.py"
 excludes="*.ipynb_checkpoints venv"
 ignores="E203, W503, E712"
 

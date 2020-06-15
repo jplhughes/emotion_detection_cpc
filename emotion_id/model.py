@@ -1,18 +1,25 @@
 from torch import nn
 from math import ceil
 from emotion_id.wavenet import Conv1dMasked, Conv1dSamePadding, ResidualStack
-from util import GlobalNormalization
+from util import GlobalNormalization, BatchNorm
 
 
 class MLPEmotionIDModel(nn.Module):
     def __init__(
-        self, input_dim, output_classes, no_layers=2, hidden_size=128, dropout_prob=0.2
+        self,
+        input_dim,
+        output_classes,
+        no_layers=2,
+        hidden_size=1024,
+        dropout_prob=0,
+        batch_norm_on=False,
     ):
         super().__init__()
         assert no_layers > 1
         blocks = [
             GlobalNormalization(input_dim, scale=False),
             nn.Linear(input_dim, hidden_size),
+            BatchNorm(hidden_size, batch_norm_on),
             nn.ReLU(),
             nn.Dropout(p=dropout_prob),
         ]
@@ -20,6 +27,7 @@ class MLPEmotionIDModel(nn.Module):
             blocks.extend(
                 [
                     nn.Linear(hidden_size, hidden_size),
+                    BatchNorm(hidden_size, batch_norm_on),
                     nn.ReLU(),
                     nn.Dropout(p=dropout_prob),
                 ]
@@ -45,9 +53,7 @@ class LinearEmotionIDModel(nn.Module):
 
 
 class ConvEmotionIDModel(nn.Module):
-    def __init__(
-        self, input_dim, output_classes, no_layers=4, hidden_size=128, dropout_prob=0.2
-    ):
+    def __init__(self, input_dim, output_classes, no_layers=4, hidden_size=128, dropout_prob=0.2):
         super().__init__()
         assert no_layers > 1
         blocks = [
@@ -65,7 +71,7 @@ class ConvEmotionIDModel(nn.Module):
                     nn.Dropout(p=dropout_prob),
                 ]
             )
-        blocks.append(Permute(), nn.Linear(hidden_size, output_classes))
+        blocks.extend([Permute(), nn.Linear(hidden_size, output_classes)])
         self.blocks = nn.Sequential(*blocks)
 
     def forward(self, x):
