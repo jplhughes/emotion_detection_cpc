@@ -20,7 +20,7 @@ from emotion_id.dataset import (
     parse_emotion_dbl,
     get_emotion_to_id_mapping,
 )
-from dataloader.streaming import MultiStreamDataLoader, DblStream, DblSampler, RawStream
+from dataloader.streaming import MultiStreamDataLoader, DblStream, DblSampler
 from cpc.model import NoCPC
 
 from util import (
@@ -55,7 +55,7 @@ flags.DEFINE_integer("window_size", 2048, "num frames to push into model at once
 flags.DEFINE_integer("batch_size", None, "batch size, num parallel streams to train on at once")
 flags.DEFINE_integer("steps", None, "number of train steps before breaking")
 flags.DEFINE_integer("hidden_size", 1024, "hidden size for models")
-flags.DEFINE_float("dropout_prob", 0.2, "dropout probability")
+flags.DEFINE_float("dropout_prob", 0.0, "dropout probability")
 flags.DEFINE_float("lr", 4e-4, "learning rate")
 flags.DEFINE_float("clip_thresh", 1.0, "value to clip gradients to")
 
@@ -149,8 +149,8 @@ def train(unused_argv):
             EmotionIDSingleFileStream,
             FLAGS.window_size,
             emotion_set_path=FLAGS.emotion_set_path,
-            audiostream_class=RawStream,
-        )  # TODO change back of use fbanks cpc.data_class,
+            audiostream_class=cpc.data_class,  # TODO ensure un-augmented stream
+        )
         for _ in range(FLAGS.batch_size)
     ]
     valid_datastream = MultiStreamDataLoader(val_streams, device=device)

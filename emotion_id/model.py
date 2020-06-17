@@ -53,7 +53,7 @@ class LinearEmotionIDModel(nn.Module):
 
 
 class ConvEmotionIDModel(nn.Module):
-    def __init__(self, input_dim, output_classes, no_layers=4, hidden_size=128, dropout_prob=0.2):
+    def __init__(self, input_dim, output_classes, no_layers=4, hidden_size=1024, dropout_prob=0):
         super().__init__()
         assert no_layers > 1
         blocks = [
@@ -78,6 +78,36 @@ class ConvEmotionIDModel(nn.Module):
         return self.blocks(x)
 
 
+class BaselineEmotionIDModel(nn.Module):
+    def __init__(self, input_dim, output_classes):
+        super().__init__()
+
+        blocks = [
+            Conv1dSamePadding(input_dim, 256, kernel_size=5),
+            nn.ReLU(),
+            Conv1dSamePadding(256, 128, kernel_size=5),
+            nn.ReLU(),
+            nn.Dropout(p=0.1),
+            nn.MaxPool1d(kernel_size=8, padding=4),
+            Conv1dSamePadding(128, 128, kernel_size=5),
+            nn.ReLU(),
+            Conv1dSamePadding(128, 128, kernel_size=5),
+            nn.ReLU(),
+            Conv1dSamePadding(128, 128, kernel_size=5),
+            nn.ReLU(),
+            nn.Dropout(p=0.2),
+            Conv1dSamePadding(128, 128, kernel_size=5),
+            nn.ReLU(),
+            Permute(),
+            nn.Linear(128, output_classes),
+        ]
+
+        self.blocks = nn.Sequential(*blocks)
+
+    def forward(self, x):
+        return self.blocks(x)
+
+
 class RecurrentEmotionIDModel(nn.Module):
     def __init__(
         self,
@@ -86,7 +116,7 @@ class RecurrentEmotionIDModel(nn.Module):
         hidden_size=512,
         num_layers=2,
         bidirectional=False,
-        dropout_prob=0.2,
+        dropout_prob=0,
     ):
         super().__init__()
         num_directions = 2 if bidirectional else 1
