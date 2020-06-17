@@ -11,6 +11,7 @@ from torch.nn.utils import clip_grad_norm_
 from emotion_id.model import (
     MLPEmotionIDModel,
     ConvEmotionIDModel,
+    BaselineEmotionIDModel,
     LinearEmotionIDModel,
     RecurrentEmotionIDModel,
     WaveNetEmotionIDModel,
@@ -47,7 +48,7 @@ flags.DEFINE_string("model_out", None, "path to where to save trained model")
 flags.DEFINE_enum(
     "model",
     "mlp2",
-    ["linear", "mlp2", "mlp4", "conv", "rnn", "rnn_bi", "wavenet", "wavenet_unmasked"],
+    ["linear", "baseline", "mlp2", "mlp4", "conv", "rnn", "rnn_bi", "wavenet", "wavenet_unmasked"],
     "The model type",
 )
 
@@ -79,9 +80,12 @@ flags.mark_flag_as_required("expdir")
 
 
 def validate(datastream, cpc, model, num_emotions):
-    model.eval()
-    cpc.stash_state()
     losses = []
+    model.eval()
+
+    # Stash and later restore states for non-leaky validation
+    cpc.stash_state()
+    model.stash_state()
 
     # reset to a fixed random seed for determisitic and comparable validation
     with FixedRandomState(42):
@@ -97,6 +101,8 @@ def validate(datastream, cpc, model, num_emotions):
             if step >= FLAGS.valid_steps:
                 break
     cpc.pop_state()
+    model.pop_state()
+
     model.train()
     return np.array(losses).mean()
 
@@ -167,6 +173,8 @@ def train(unused_argv):
 
     if FLAGS.model == "linear":
         model = LinearEmotionIDModel(feat_dim, num_emotions).to(device)
+    if FLAGS.model == "baseline":
+        model = BaselineEmotionIDModel(feat_dim, num_emotions).to(device)
     elif FLAGS.model == "mlp2":
         model = MLPEmotionIDModel(
             feat_dim,

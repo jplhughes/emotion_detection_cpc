@@ -4,7 +4,36 @@ from emotion_id.wavenet import Conv1dMasked, Conv1dSamePadding, ResidualStack
 from util import GlobalNormalization, BatchNorm
 
 
-class MLPEmotionIDModel(nn.Module):
+class BaseModel:
+    @property
+    def num_params(self) -> int:
+        """
+        :return: number of parameters in the module
+        """
+        return sum([p.nelement() for p in self.parameters()])
+
+    def stash_state(self):
+        """
+        stash state within model and initialize new hidden state
+        for use with recurrent models, dummy method for others
+        """
+        pass
+
+    def pop_state(self):
+        """
+        pop state from stashed state, overwriting current hidden state
+        for use with recurrent models, dummy method for others
+        """
+        pass
+
+    def reset_state(self):
+        """
+        reset state for use with recurrent models, dummy method for others
+        """
+        pass
+
+
+class MLPEmotionIDModel(nn.Module, BaseModel):
     def __init__(
         self,
         input_dim,
@@ -39,7 +68,7 @@ class MLPEmotionIDModel(nn.Module):
         return self.blocks(x)
 
 
-class LinearEmotionIDModel(nn.Module):
+class LinearEmotionIDModel(nn.Module, BaseModel):
     def __init__(self, in_c, output_classes):
         super().__init__()
         self.normalize = GlobalNormalization(in_c, scale=False)
@@ -52,7 +81,7 @@ class LinearEmotionIDModel(nn.Module):
         return x
 
 
-class ConvEmotionIDModel(nn.Module):
+class ConvEmotionIDModel(nn.Module, BaseModel):
     def __init__(self, input_dim, output_classes, no_layers=4, hidden_size=1024, dropout_prob=0):
         super().__init__()
         assert no_layers > 1
@@ -78,11 +107,12 @@ class ConvEmotionIDModel(nn.Module):
         return self.blocks(x)
 
 
-class BaselineEmotionIDModel(nn.Module):
+class BaselineEmotionIDModel(nn.Module, BaseModel):
     def __init__(self, input_dim, output_classes):
         super().__init__()
 
         blocks = [
+            Permute(),
             Conv1dSamePadding(input_dim, 256, kernel_size=5),
             nn.ReLU(),
             Conv1dSamePadding(256, 128, kernel_size=5),
@@ -108,7 +138,7 @@ class BaselineEmotionIDModel(nn.Module):
         return self.blocks(x)
 
 
-class RecurrentEmotionIDModel(nn.Module):
+class RecurrentEmotionIDModel(nn.Module, BaseModel):
     def __init__(
         self,
         feat_dim,
@@ -119,8 +149,6 @@ class RecurrentEmotionIDModel(nn.Module):
         dropout_prob=0,
     ):
         super().__init__()
-        num_directions = 2 if bidirectional else 1
-
         self.normalize = GlobalNormalization(feat_dim, scale=False)
         self.hidden_state = None
         self.gru = nn.GRU(
@@ -131,22 +159,31 @@ class RecurrentEmotionIDModel(nn.Module):
             dropout=dropout_prob,
             bidirectional=bidirectional,
         )
-        self.linear = nn.Linear(hidden_size * num_directions, num_emotions)
+        self.linear = nn.Linear(hidden_size * (2 if bidirectional else 1), num_emotions)
+
+    def stash_state(self):
+        self.state_stash = self.hidden_state.detach().clone()
+        self.reset_state()
+
+    def reset_state(self):
+        self.hidden_state = None
+
+    def pop_state(self):
+        self.hidden_state = self.state_stash
+        self.state_stash = None
 
     def forward(self, x):
         x = self.normalize(x)
-
-        if self.hidden_state is not None:
+        if self.hidden_state is not None and x.shape[0] != self.hidden_state.shape[0]:
+            self.reset_state()
+        if self.hidden_state:
             self.hidden_state = self.hidden_state.detach()
-
-            if x.shape[0] != self.hidden_state.shape[0]:
-                self.hidden_state = None
 
         x, self.hidden_state = self.gru(x, self.hidden_state)
         return self.linear(x)
 
 
-class WaveNetEmotionIDModel(nn.Module):
+class WaveNetEmotionIDModel(nn.Module, BaseModel):
     def __init__(
         self,
         in_c,
