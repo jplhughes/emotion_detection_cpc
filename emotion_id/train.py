@@ -45,6 +45,11 @@ from util import (
     resample_1d,
     device,
     setup_dry_run,
+    EmptyScheduler,
+    get_checkpoint_to_start_from,
+    write_current_pid,
+    load_checkpoint,
+    dump_checkpoint_on_kill,
 )
 
 FLAGS = flags.FLAGS
@@ -56,6 +61,9 @@ flags.DEFINE_string("emotion_set_path", None, "path to smotion set")
 
 flags.DEFINE_string("cpc_path", None, "path to cpc model to use")
 flags.DEFINE_string("model_out", None, "path to where to save trained model")
+flags.DEFINE_string("checkpoint", None, "path to loading saved checkpoint")
+flags.DEFINE_string("checkpoint_out", None, "path to save checkpoint")
+flags.DEFINE_boolean("checkpoint_autoload", True, "if True start from latest checkpoint_out")
 flags.DEFINE_enum(
     "model",
     "mlp2",
@@ -172,7 +180,7 @@ def validate_filewise(dbl, cpc, model, num_emotions):
     f1 = f1_score(refs, preds, average="macro")
 
     cm = confusion_matrix(refs, preds)
-    fig, ax = plt.subplots(figsize=(20, 16), dpi=150)
+    fig, ax = plt.subplots(figsize=(8, 6), dpi=150)
     sns.heatmap(cm, annot=True, ax=ax)
     ax.set_xlabel("Predicted labels")
     ax.set_ylabel("True labels")
@@ -186,18 +194,25 @@ def validate_filewise(dbl, cpc, model, num_emotions):
 
 def train(unused_argv):
     set_seeds(FLAGS.seed)
+    write_current_pid(FLAGS.expdir)
     # setup logging
     tb_logger = prepare_tb_logging()
     prepare_standard_logging("training")
     loss_dir = Path(f"{FLAGS.expdir}/losses")
     loss_dir.mkdir(exist_ok=True)
-    train_losses_fh = open(loss_dir / "train.txt", "a")
-    valid_losses_fh = open(loss_dir / "valid.txt", "a")
+    train_losses_fh = open(loss_dir / "train.txt", "a", buffering=1)
+    valid_losses_fh = open(loss_dir / "valid.txt", "a", buffering=1)
 
     if FLAGS.dry_run is True:
         setup_dry_run(FLAGS)
     if not FLAGS.model_out:
         FLAGS.model_out = FLAGS.expdir + "/model.pt"
+    if not FLAGS.checkpoint_out:
+        FLAGS.checkpoint_out = FLAGS.expdir + "/checkpoint.pt"
+
+    if FLAGS.checkpoint_autoload is True and not FLAGS.checkpoint:
+        FLAGS.checkpoint = get_checkpoint_to_start_from(FLAGS.checkpoint_out)
+        logging.info(f"autosetting checkpoint: {FLAGS.checkpoint}")
 
     if FLAGS.cpc_path is not None:
         cpc = load_model(FLAGS.cpc_path).to(device)
@@ -251,7 +266,7 @@ def train(unused_argv):
 
     if FLAGS.model == "linear":
         model = LinearEmotionIDModel(feat_dim, num_emotions).to(device)
-    if FLAGS.model == "baseline":
+    elif FLAGS.model == "baseline":
         model = BaselineEmotionIDModel(feat_dim, num_emotions).to(device)
     elif FLAGS.model == "mlp2":
         model = MLPEmotionIDModel(
@@ -314,9 +329,22 @@ def train(unused_argv):
     optimizer = RAdam(model.parameters(), eps=1e-05, lr=FLAGS.lr)
     if FLAGS.lr_schedule:
         scheduler = FlatCA(optimizer, steps=FLAGS.steps, eta_min=0)
+    else:
+        scheduler = EmptyScheduler(optimizer)
 
-    best_val_loss = inf
-    for step, batch in enumerate(train_datastream):
+    step = 0
+    optimizer.best_val_loss = inf
+
+    if FLAGS.checkpoint:
+        # loading state_dicts in-place
+        load_checkpoint(FLAGS.checkpoint, model, optimizer, scheduler=scheduler)
+        step = optimizer.restored_step
+
+    dump_checkpoint_on_kill(model, optimizer, scheduler, FLAGS.checkpoint_out)
+    set_seeds(FLAGS.seed + step)
+
+    model.train()
+    for batch in train_datastream:
         data, labels = batch["data"].to(device), batch["labels"]
         features = cpc(data)
         pred = model(features)
@@ -330,15 +358,13 @@ def train(unused_argv):
         clip_grad_norm_(model.parameters(), FLAGS.clip_thresh)
 
         optimizer.step()
-        if FLAGS.lr_schedule:
-            scheduler.step()
+        scheduler.step()
         # log training losses
         logging.info(f"{step} train steps, loss={loss.item():.5}")
         tb_logger.add_scalar("train/loss", loss, step)
         train_losses_fh.write(f"{step}, {loss.item()}\n")
 
-        if FLAGS.lr_schedule:
-            tb_logger.add_scalar("train/lr", scheduler.get_lr()[0], step)
+        tb_logger.add_scalar("train/lr", scheduler.get_lr()[0], step)
 
         # validate periodically
         if step % FLAGS.val_every == 0 and step != 0:
@@ -368,10 +394,10 @@ def train(unused_argv):
             tb_logger.add_scalar("test/f1_score", f1_score, step)
             tb_logger.add_image("test/confusion_matrix", fig2tensor(fig), step)
 
-            if valid_loss.item() < best_val_loss:
+            if valid_loss.item() < optimizer.best_val_loss:
                 logging.info("Saving new best validation")
                 save(model, FLAGS.model_out + ".bestval")
-                best_val_loss = valid_loss.item()
+                optimizer.best_val_loss = valid_loss.item()
 
         # save out model periodically
         if step % FLAGS.save_every == 0 and step != 0:
@@ -379,6 +405,8 @@ def train(unused_argv):
 
         if step >= FLAGS.steps:
             break
+
+        step += 1
 
     save(model, FLAGS.model_out)
 
