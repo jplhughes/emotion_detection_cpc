@@ -140,8 +140,10 @@ def validate(datastream, cpc, model, num_emotions):
 def validate_filewise(dbl, cpc, model, num_emotions):
     logging.info("Starting filewise validation")
     losses = []
-    preds = []
-    refs = []
+    frame_preds = []
+    frame_refs = []
+    file_preds = []
+    file_refs = []
     model.eval()
 
     # Stash and later restore states for non-leaky validation
@@ -154,6 +156,7 @@ def validate_filewise(dbl, cpc, model, num_emotions):
         stream = EmotionIDSingleFileStream(
             dbl_entry, FLAGS.window_size, FLAGS.emotion_set_path, audiostream_class=cpc.data_class
         )
+        single_file_preds = []
         for j, batch in enumerate(stream):
             with torch.no_grad():
                 data = torch.tensor(batch["data"]).unsqueeze(0).to(device)
@@ -163,33 +166,52 @@ def validate_filewise(dbl, cpc, model, num_emotions):
                 logits = model(features)
                 # get pred
                 pred = logits.argmax(dim=2).squeeze(dim=0)
-                preds.append(pred)
+                frame_preds.append(pred)
+                single_file_preds.append(pred)
                 if logits.shape[1] > 1:
                     labels = resample_1d(labels, logits.shape[1])
                 labels = labels.reshape(-1)
-                refs.append(labels)
+                frame_refs.append(labels)
                 # get loss
                 logits = logits.reshape(-1, num_emotions)
                 losses.append(F.cross_entropy(logits, labels.to(device)).item())
 
-    preds = torch.cat(preds, dim=0).cpu().numpy()
-    refs = torch.cat(refs, dim=0).cpu().numpy()
+        counts = np.bincount(torch.cat(single_file_preds, dim=0).cpu().numpy())
+        file_preds.append(np.argmax(counts))
+        file_refs.append(labels[-1])
 
-    av_loss = np.array(losses).mean()
-    acc = accuracy_score(refs, preds)
-    f1 = f1_score(refs, preds, average="macro")
+    frame_preds = torch.cat(frame_preds, dim=0).cpu().numpy()
+    frame_refs = torch.cat(frame_refs, dim=0).cpu().numpy()
+    file_preds = np.array(file_preds)
+    file_refs = np.array(file_refs)
 
-    cm = confusion_matrix(refs, preds)
-    fig, ax = plt.subplots(figsize=(8, 6), dpi=150)
-    sns.heatmap(cm, annot=True, ax=ax)
-    ax.set_xlabel("Predicted labels")
-    ax.set_ylabel("True labels")
+    results = {}
+    results["average_loss"] = np.array(losses).mean()
+    emotion2id = get_emotion_to_id_mapping(FLAGS.emotion_set_path)
+
+    for refs, preds, name in zip(
+        [frame_refs, file_refs], [frame_preds, file_preds], ["framewise", "filewise"]
+    ):
+        results[name] = {}
+        results[name]["accuracy"] = accuracy_score(refs, preds)
+        results[name]["average_f1"] = f1_score(refs, preds, average="macro")
+        results[name]["class_f1"] = {}
+        f1_scores = f1_score(refs, preds, average=None)
+        for f1, emotion in zip(f1_scores, emotion2id.keys()):
+            results[name]["class_f1"][emotion] = f1
+
+        cm = confusion_matrix(refs, preds)
+        fig, ax = plt.subplots(figsize=(8, 6), dpi=150)
+        sns.heatmap(cm, annot=True, ax=ax)
+        ax.set_xlabel("Predicted labels")
+        ax.set_ylabel("True labels")
+        results[name]["confusion_matrix"] = fig
 
     cpc.pop_state()
     model.pop_state()
     model.train()
 
-    return av_loss, acc, f1, fig
+    return results
 
 
 def train(unused_argv):
@@ -378,21 +400,18 @@ def train(unused_argv):
             tb_logger.add_scalar("valid/loss", valid_loss, step)
             valid_losses_fh.write(f"{step}, {valid_loss}\n")
 
-            av_loss, acc, f1_score, fig = validate_filewise(
-                parsed_valid_dbl, cpc, model, num_emotions
-            )
-            tb_logger.add_scalar("valid/full_loss", av_loss, step)
-            tb_logger.add_scalar("valid/accuracy", acc, step)
-            tb_logger.add_scalar("valid/f1_score", f1_score, step)
-            tb_logger.add_image("valid/confusion_matrix", fig2tensor(fig), step)
+            val_results = validate_filewise(parsed_valid_dbl, cpc, model, num_emotions)
+            test_results = validate_filewise(parsed_test_dbl, cpc, model, num_emotions)
+            for results, dataset in zip([val_results, test_results], ["valid", "test"]):
+                tb_logger.add_scalar(f"{dataset}/full_loss", results["average_loss"], step)
+                for name in ["framewise", "filewise"]:
+                    cm = fig2tensor(results[name]["confusion_matrix"])
+                    tb_logger.add_scalar(f"{dataset}/accuracy", results[name]["accuracy"], step)
+                    tb_logger.add_scalar(f"{dataset}/f1_score", results[name]["average_f1"], step)
+                    tb_logger.add_image(f"{dataset}/confusion_matrix", cm, step)
 
-            av_loss, acc, f1_score, fig = validate_filewise(
-                parsed_test_dbl, cpc, model, num_emotions
-            )
-            tb_logger.add_scalar("test/full_loss", av_loss, step)
-            tb_logger.add_scalar("test/accuracy", acc, step)
-            tb_logger.add_scalar("test/f1_score", f1_score, step)
-            tb_logger.add_image("test/confusion_matrix", fig2tensor(fig), step)
+            for emotion, f1 in val_results["framewise"]["class_f1"].items():
+                tb_logger.add_scalar(f"f1/{emotion}", f1, step)
 
             if valid_loss.item() < optimizer.best_val_loss:
                 logging.info("Saving new best validation")
