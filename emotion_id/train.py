@@ -8,6 +8,16 @@ from torch import save
 import torch.nn.functional as F
 from torch.nn.utils import clip_grad_norm_
 
+import io
+from PIL import Image
+from sklearn.metrics import (
+    confusion_matrix,
+    f1_score,
+    accuracy_score,
+)
+import seaborn as sns
+import matplotlib.pyplot as plt
+
 from emotion_id.model import (
     MLPEmotionIDModel,
     ConvEmotionIDModel,
@@ -41,6 +51,7 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string("expdir", None, "directory to write all experiment data to")
 flags.DEFINE_string("train_data", None, "path to train files")
 flags.DEFINE_string("val_data", None, "path to validation files")
+flags.DEFINE_string("test_data", None, "path to validation files")
 flags.DEFINE_string("emotion_set_path", None, "path to smotion set")
 
 flags.DEFINE_string("cpc_path", None, "path to cpc model to use")
@@ -79,6 +90,17 @@ flags.mark_flag_as_required("val_data")
 flags.mark_flag_as_required("expdir")
 
 
+def fig2tensor(fig):
+    """Convert a Matplotlib figure to a PIL Image and return it"""
+    buf = io.BytesIO()
+    fig.savefig(buf)
+    buf.seek(0)
+    img = Image.open(buf)
+    x = np.array(img)
+    x = torch.Tensor(x).permute(2, 0, 1) / 255.0
+    return x
+
+
 def validate(datastream, cpc, model, num_emotions):
     losses = []
     model.eval()
@@ -107,6 +129,61 @@ def validate(datastream, cpc, model, num_emotions):
     return np.array(losses).mean()
 
 
+def validate_filewise(dbl, cpc, model, num_emotions):
+    logging.info("Starting filewise validation")
+    losses = []
+    preds = []
+    refs = []
+    model.eval()
+
+    # Stash and later restore states for non-leaky validation
+    cpc.stash_state()
+    model.stash_state()
+
+    # loop over each dbl
+    for i, dbl_entry in enumerate(dbl):
+        # file specific stream to iterate over
+        stream = EmotionIDSingleFileStream(
+            dbl_entry, FLAGS.window_size, FLAGS.emotion_set_path, audiostream_class=cpc.data_class
+        )
+        for j, batch in enumerate(stream):
+            with torch.no_grad():
+                data = torch.tensor(batch["data"]).unsqueeze(0).to(device)
+                labels = torch.tensor(batch["labels"]).unsqueeze(0)
+                # get predictions
+                features = cpc(data)
+                logits = model(features)
+                # get pred
+                pred = logits.argmax(dim=2).squeeze(dim=0)
+                preds.append(pred)
+                if logits.shape[1] > 1:
+                    labels = resample_1d(labels, logits.shape[1])
+                labels = labels.reshape(-1)
+                refs.append(labels)
+                # get loss
+                logits = logits.reshape(-1, num_emotions)
+                losses.append(F.cross_entropy(logits, labels.to(device)).item())
+
+    preds = torch.cat(preds, dim=0).cpu().numpy()
+    refs = torch.cat(refs, dim=0).cpu().numpy()
+
+    av_loss = np.array(losses).mean()
+    acc = accuracy_score(refs, preds)
+    f1 = f1_score(refs, preds, average="macro")
+
+    cm = confusion_matrix(refs, preds)
+    fig, ax = plt.subplots(figsize=(20, 16), dpi=150)
+    sns.heatmap(cm, annot=True, ax=ax)
+    ax.set_xlabel("Predicted labels")
+    ax.set_ylabel("True labels")
+
+    cpc.pop_state()
+    model.pop_state()
+    model.train()
+
+    return av_loss, acc, f1, fig
+
+
 def train(unused_argv):
     set_seeds(FLAGS.seed)
     # setup logging
@@ -129,7 +206,7 @@ def train(unused_argv):
         cpc = NoCPC()
     cpc.eval()
 
-    # write information about body into metadata
+    # write information about cpc into metadata
     with open(f"{FLAGS.expdir}/metadata.txt", "a") as fh:
         fh.write(f"sampling_rate_hz {cpc.data_class.SAMPLING_RATE_HZ}\n")
         fh.write(f"feat_dim {cpc.feat_dim}\n")
@@ -149,6 +226,7 @@ def train(unused_argv):
     train_datastream = MultiStreamDataLoader(train_streams, device=device)
     # define validation data
     parsed_valid_dbl = parse_emotion_dbl(FLAGS.val_data)
+    parsed_test_dbl = parse_emotion_dbl(FLAGS.test_data)
     val_streams = [
         DblStream(
             DblSampler(parsed_valid_dbl),
@@ -273,6 +351,22 @@ def train(unused_argv):
             )
             tb_logger.add_scalar("valid/loss", valid_loss, step)
             valid_losses_fh.write(f"{step}, {valid_loss}\n")
+
+            av_loss, acc, f1_score, fig = validate_filewise(
+                parsed_valid_dbl, cpc, model, num_emotions
+            )
+            tb_logger.add_scalar("valid/full_loss", av_loss, step)
+            tb_logger.add_scalar("valid/accuracy", acc, step)
+            tb_logger.add_scalar("valid/f1_score", f1_score, step)
+            tb_logger.add_image("valid/confusion_matrix", fig2tensor(fig), step)
+
+            av_loss, acc, f1_score, fig = validate_filewise(
+                parsed_test_dbl, cpc, model, num_emotions
+            )
+            tb_logger.add_scalar("test/full_loss", av_loss, step)
+            tb_logger.add_scalar("test/accuracy", acc, step)
+            tb_logger.add_scalar("test/f1_score", f1_score, step)
+            tb_logger.add_image("test/confusion_matrix", fig2tensor(fig), step)
 
             if valid_loss.item() < best_val_loss:
                 logging.info("Saving new best validation")
