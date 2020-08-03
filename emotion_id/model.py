@@ -189,9 +189,9 @@ class WaveNetEmotionIDModel(nn.Module, BaseModel):
         in_c,
         output_classes,
         hidden_size=64,
-        dilation_depth=4,
-        n_repeat=1,
-        kernel_size=3,
+        dilation_depth=6,
+        n_repeat=5,
+        kernel_size=2,
         masked=True,
     ):
         super().__init__()

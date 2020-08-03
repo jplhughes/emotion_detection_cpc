@@ -383,10 +383,10 @@ def train(unused_argv):
         scheduler.step()
         # log training losses
         logging.info(f"{step} train steps, loss={loss.item():.5}")
-        tb_logger.add_scalar("train/loss", loss, step)
+        tb_logger.add_scalar("01_train/loss", loss, step)
         train_losses_fh.write(f"{step}, {loss.item()}\n")
 
-        tb_logger.add_scalar("train/lr", scheduler.get_lr()[0], step)
+        tb_logger.add_scalar("01_train/lr", scheduler.get_lr()[0], step)
 
         # validate periodically
         if step % FLAGS.val_every == 0 and step != 0:
@@ -397,21 +397,25 @@ def train(unused_argv):
                 f"{step} validation, loss={valid_loss.item():.5}, "
                 f"{valid_frames:,} items validated"
             )
-            tb_logger.add_scalar("valid/loss", valid_loss, step)
+            tb_logger.add_scalar("02_valid/loss", valid_loss, step)
             valid_losses_fh.write(f"{step}, {valid_loss}\n")
 
             val_results = validate_filewise(parsed_valid_dbl, cpc, model, num_emotions)
             test_results = validate_filewise(parsed_test_dbl, cpc, model, num_emotions)
-            for results, dataset in zip([val_results, test_results], ["valid", "test"]):
+            for results, dataset in zip([val_results, test_results], ["02_valid", "03_test"]):
                 tb_logger.add_scalar(f"{dataset}/full_loss", results["average_loss"], step)
                 for name in ["framewise", "filewise"]:
                     cm = fig2tensor(results[name]["confusion_matrix"])
-                    tb_logger.add_scalar(f"{dataset}/accuracy", results[name]["accuracy"], step)
-                    tb_logger.add_scalar(f"{dataset}/f1_score", results[name]["average_f1"], step)
-                    tb_logger.add_image(f"{dataset}/confusion_matrix", cm, step)
+                    tb_logger.add_scalar(
+                        f"{dataset}/accuracy_{name}", results[name]["accuracy"], step
+                    )
+                    tb_logger.add_scalar(
+                        f"{dataset}/f1_score_{name}", results[name]["average_f1"], step
+                    )
+                    tb_logger.add_image(f"{dataset}/confusion_matrix_{name}", cm, step)
 
             for emotion, f1 in val_results["framewise"]["class_f1"].items():
-                tb_logger.add_scalar(f"f1/{emotion}", f1, step)
+                tb_logger.add_scalar(f"04_f1/{emotion}", f1, step)
 
             if valid_loss.item() < optimizer.best_val_loss:
                 logging.info("Saving new best validation")
