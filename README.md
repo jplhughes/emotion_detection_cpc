@@ -75,3 +75,7 @@ python3.7 -m emotion_id.score \
 
 grep "accuracy" $HOME/exp/emotion_id/score/score_results.json
 ```
+
+---
+
+License: [MIT](LICENSE.txt)
