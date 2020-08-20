@@ -3,9 +3,9 @@ __pycache__/
 .ipynb_checkpoints
 *.ipynb
 venv/
-data/
 dataloader/
 models/
 cpc/scripts
 emotion_id/scripts
 util.py
+results_log.txt

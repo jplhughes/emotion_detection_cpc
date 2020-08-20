@@ -7,6 +7,7 @@ from collections import namedtuple
 import json
 import argparse
 from random import random
+import subprocess
 
 # parse arguments
 parser = argparse.ArgumentParser()
@@ -90,9 +91,9 @@ with open(f"{args.output}/emotion_set.txt", "w") as fp:
 
 # Save dbl files
 # 80:10:10 train val test split, two speakers are kept separate from training
-train_dbl = open(f"{args.output}/train.dbl", "w")
-test_dbl = open(f"{args.output}/test.dbl", "w")
-val_dbl = open(f"{args.output}/val.dbl", "w")
+train_dbl = open(f"{args.output}/train.ordered.dbl", "w")
+test_dbl = open(f"{args.output}/test.ordered.dbl", "w")
+val_dbl = open(f"{args.output}/val.ordered.dbl", "w")
 
 prob_not_train = (24 * 0.2 - 2) / (24 - 2)
 
@@ -127,3 +128,8 @@ val_dbl.close()
 print(train_class_counts)
 print(val_class_counts)
 print(test_class_counts)
+
+# randomize dbls
+subprocess.call(f"sort -R {args.output}/train.ordered.dbl > {args.output}/train.dbl", shell=True)
+subprocess.call(f"sort -R {args.output}/test.ordered.dbl > {args.output}/test.dbl", shell=True)
+subprocess.call(f"sort -R {args.output}/val.ordered.dbl > {args.output}/val.dbl", shell=True)
