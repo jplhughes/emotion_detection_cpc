@@ -1,7 +1,7 @@
 # emotion_detection_cpc
-This repo provides the code for an emotion recognition system using speech as an input. The performance is boosted using self-supervised representations trained with Contrastive Predictive Coding (CPC). Results have improved from a baseline of 71% to 80% accuracy when using CPC which is a significant relative reduction in error of 29.2%.
+This repo provides the code for an emotion recognition system using speech as an input. The performance is boosted using self-supervised representations trained with Contrastive Predictive Coding (CPC). Results have improved from a baseline of 71% to 80% accuracy when using CPC which is a significant relative reduction in error of 30%.
 
-Blog here: TODO copy medium link
+Blog here: https://bit.ly/2GpcT5P
 
 
 ## Initial setup 
