@@ -184,15 +184,10 @@ class TrainedCPC(nn.Module):
     """
 
     def __init__(self, cpc_model):
-        self.features_in = cpc_model.features_in
-        if self.features_in == "raw":
-            data_class = RawStream
-        elif self.features_in == "fbank":
-            data_class = FbankStream
 
         super().__init__()
         self.feat_dim = cpc_model.out_size
-        self.data_class = data_class
+        self.data_class = cpc_model.features_in
 
         self.cpc_model = cpc_model
         self.hidden_state = None
@@ -226,7 +221,7 @@ class TrainedCPC(nn.Module):
 
 
 class NoCPC(nn.Module):
-    def __init__(self, feat_dim=80, data_class=FbankStream):
+    def __init__(self, feat_dim=80, data_class="fbank"):
         super().__init__()
         self.feat_dim = feat_dim
         self.data_class = data_class
