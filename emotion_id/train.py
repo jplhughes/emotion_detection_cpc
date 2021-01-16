@@ -26,12 +26,7 @@ from emotion_id.model import (
     RecurrentEmotionIDModel,
     WaveNetEmotionIDModel,
 )
-from emotion_id.dataset import (
-    EmotionIDSingleFileStream,
-    parse_emotion_dbl,
-    get_emotion_to_id_mapping,
-)
-from dataloader.streaming import MultiStreamDataLoader, DblStream, DblSampler
+from dataloader.audio import EmotionDataset, AudioDataLoader
 from cpc.model import NoCPC
 
 from util import (
@@ -71,6 +66,7 @@ flags.DEFINE_integer("val_every", None, "how often to perform validation")
 flags.DEFINE_integer("save_every", None, "save every n steps")
 
 flags.DEFINE_boolean("batch_norm", False, "batch_norm")
+flags.DEFINE_integer("num_workers", 8, "number of workers for dataloader")
 
 
 flags.mark_flag_as_required("emotion_set_path")
@@ -79,107 +75,6 @@ flags.mark_flag_as_required("steps")
 flags.mark_flag_as_required("train_data")
 flags.mark_flag_as_required("val_data")
 flags.mark_flag_as_required("expdir")
-
-
-def validate(datastream, cpc, model, num_emotions):
-    losses = []
-    model.eval()
-
-    # Stash and later restore states for non-leaky validation
-    cpc.stash_state()
-    model.stash_state()
-
-    # reset to a fixed random seed for determisitic and comparable validation
-    with FixedRandomState(42):
-        for step, batch in enumerate(datastream):
-            data, labels = batch["data"].to(device), batch["labels"]
-            with torch.no_grad():
-                features = cpc(data)
-                pred = model(features).reshape(-1, num_emotions)
-                labels = labels.reshape(-1)
-                losses.append(F.cross_entropy(pred, labels.to(device)).item())
-            if step >= FLAGS.valid_steps:
-                break
-    cpc.pop_state()
-    model.pop_state()
-
-    model.train()
-    return np.array(losses).mean()
-
-
-def validate_filewise(dbl, cpc, model, num_emotions):
-    logging.info("Starting filewise validation")
-    losses = []
-    frame_preds = []
-    frame_refs = []
-    file_preds = []
-    file_refs = []
-    model.eval()
-
-    # Stash and later restore states for non-leaky validation
-    cpc.stash_state()
-    model.stash_state()
-
-    # loop over each dbl
-    for i, dbl_entry in enumerate(dbl):
-        # file specific stream to iterate over
-        stream = EmotionIDSingleFileStream(
-            dbl_entry, FLAGS.window_size, FLAGS.emotion_set_path, audiostream_class=cpc.data_class
-        )
-        single_file_preds = []
-        for j, batch in enumerate(stream):
-            with torch.no_grad():
-                data = torch.tensor(batch["data"]).unsqueeze(0).to(device)
-                labels = torch.tensor(batch["labels"]).unsqueeze(0)
-                # get predictions
-                features = cpc(data)
-                logits = model(features)
-                # get pred
-                pred = logits.argmax(dim=2).squeeze(dim=0)
-                frame_preds.append(pred)
-                single_file_preds.append(pred)
-                labels = labels.reshape(-1)
-                frame_refs.append(labels)
-                # get loss
-                logits = logits.reshape(-1, num_emotions)
-                losses.append(F.cross_entropy(logits, labels.to(device)).item())
-
-        counts = np.bincount(torch.cat(single_file_preds, dim=0).cpu().numpy())
-        file_preds.append(np.argmax(counts))
-        file_refs.append(labels[-1])
-
-    frame_preds = torch.cat(frame_preds, dim=0).cpu().numpy()
-    frame_refs = torch.cat(frame_refs, dim=0).cpu().numpy()
-    file_preds = np.array(file_preds)
-    file_refs = np.array(file_refs)
-
-    results = {}
-    results["average_loss"] = np.array(losses).mean()
-    emotion2id = get_emotion_to_id_mapping(FLAGS.emotion_set_path)
-
-    for refs, preds, name in zip(
-        [frame_refs, file_refs], [frame_preds, file_preds], ["framewise", "filewise"]
-    ):
-        results[name] = {}
-        results[name]["accuracy"] = accuracy_score(refs, preds)
-        results[name]["average_f1"] = f1_score(refs, preds, average="macro")
-        results[name]["class_f1"] = {}
-        f1_scores = f1_score(refs, preds, average=None)
-        for f1, emotion in zip(f1_scores, emotion2id.keys()):
-            results[name]["class_f1"][emotion] = f1
-
-        cm = confusion_matrix(refs, preds)
-        fig, ax = plt.subplots(figsize=(8, 6), dpi=150)
-        sns.heatmap(cm, annot=True, ax=ax)
-        ax.set_xlabel("Predicted labels")
-        ax.set_ylabel("True labels")
-        results[name]["confusion_matrix"] = fig
-
-    cpc.pop_state()
-    model.pop_state()
-    model.train()
-
-    return results
 
 
 def train(unused_argv):
@@ -203,35 +98,42 @@ def train(unused_argv):
 
     # write information about cpc into metadata
     with open(f"{FLAGS.expdir}/metadata.txt", "a") as fh:
-        fh.write(f"sampling_rate_hz {cpc.data_class.SAMPLING_RATE_HZ}\n")
+        fh.write(f"data_class {cpc.data_class}\n")
         fh.write(f"feat_dim {cpc.feat_dim}\n")
 
     # define training data
-    parsed_train_dbl = parse_emotion_dbl(FLAGS.train_data)
-    train_streams = [
-        DblStream(
-            DblSampler(parsed_train_dbl),
-            EmotionIDSingleFileStream,
-            FLAGS.window_size,
-            emotion_set_path=FLAGS.emotion_set_path,
-            audiostream_class=cpc.data_class,
-        )
-        for _ in range(FLAGS.batch_size)
-    ]
-    train_datastream = MultiStreamDataLoader(train_streams, device=device)
+    train_dataset = EmotionDataset(FLAGS.train_data, FLAGS.emotion_set_path)
+    train_dataloader = AudioDataLoader(
+        train_dataset,
+        window_size=FLAGS.window_size,
+        batch_size=FLAGS.batch_size,
+        feature_transform=cpc.data_class,
+        num_workers=FLAGS.num_workers,
+        shuffle=True,
+        drop_last=True,
+    )
     # define validation data
-    parsed_valid_dbl = parse_emotion_dbl(FLAGS.val_data)
-    val_streams = [
-        DblStream(
-            DblSampler(parsed_valid_dbl),
-            EmotionIDSingleFileStream,
-            FLAGS.window_size,
-            emotion_set_path=FLAGS.emotion_set_path,
-            audiostream_class=cpc.data_class,
-        )
-        for _ in range(FLAGS.batch_size)
-    ]
-    valid_datastream = MultiStreamDataLoader(val_streams, device=device)
+    val_dataset = EmotionDataset(FLAGS.val_data, FLAGS.emotion_set_path)
+    val_dataloader = AudioDataLoader(
+        val_dataset,
+        window_size=FLAGS.window_size,
+        batch_size=FLAGS.batch_size,
+        feature_transform=cpc.data_class,
+        num_workers=FLAGS.num_workers,
+        shuffle=False,
+        drop_last=True,
+    )
+    # filewise validation (like decode time)
+    decode_dataset = EmotionDataset(FLAGS.val_data, FLAGS.emotion_set_path, train=False)
+    decode_dataloader = AudioDataLoader(
+        decode_dataset,
+        window_size=None,
+        batch_size=1,
+        feature_transform=cpc.data_class,
+        num_workers=FLAGS.num_workers,
+        shuffle=False,
+    )
+
     if not FLAGS.val_every:
         FLAGS.val_every = max(100, FLAGS.steps // 50)
     if not FLAGS.save_every:
@@ -241,7 +143,7 @@ def train(unused_argv):
     valid_frames = FLAGS.batch_size * FLAGS.window_size * FLAGS.valid_steps
 
     feat_dim = cpc.feat_dim
-    num_emotions = len(get_emotion_to_id_mapping(FLAGS.emotion_set_path))
+    num_emotions = len(train_dataset.get_emotion_to_id_mapping(FLAGS.emotion_set_path))
 
     if FLAGS.model == "linear":
         model = LinearEmotionIDModel(feat_dim, num_emotions).to(device)
@@ -312,15 +214,15 @@ def train(unused_argv):
     best_val_loss = inf
 
     model.train()
-    for batch in train_datastream:
-        data, labels = batch["data"].to(device), batch["labels"]
+    for batch in train_dataloader:
+        data, labels = batch["data"].to(device), batch["labels"].to(device)
         features = cpc(data)
         pred = model(features)
-        labels = labels.reshape(-1).to(device)
 
         # get cross entropy loss against emotion labels and take step
         optimizer.zero_grad()
         pred = pred.reshape(-1, num_emotions)
+        labels = labels.reshape(-1)
         loss = F.cross_entropy(pred, labels)
         loss.backward()
         clip_grad_norm_(model.parameters(), FLAGS.clip_thresh)
@@ -337,7 +239,7 @@ def train(unused_argv):
         # validate periodically
         if step % FLAGS.val_every == 0 and step != 0:
 
-            valid_loss = validate(valid_datastream, cpc, model, num_emotions)
+            valid_loss = validate(val_dataloader, cpc, model, num_emotions)
             # log validation losses
             logging.info(
                 f"{step} validation, loss={valid_loss.item():.5}, "
@@ -346,7 +248,7 @@ def train(unused_argv):
             tb_logger.add_scalar("02_valid/loss", valid_loss, step)
             valid_losses_fh.write(f"{step}, {valid_loss}\n")
 
-            val_results = validate_filewise(parsed_valid_dbl, cpc, model, num_emotions)
+            val_results = validate_filewise(decode_dataloader, cpc, model, num_emotions)
             tb_logger.add_scalar("02_valid/full_loss", val_results["average_loss"], step)
             for name in ["framewise", "filewise"]:
                 cm = fig2tensor(val_results[name]["confusion_matrix"])
@@ -380,6 +282,105 @@ def train(unused_argv):
     # close loss logging file handles
     train_losses_fh.close()
     valid_losses_fh.close()
+
+
+def validate(dataloader, cpc, model, num_emotions):
+    losses = []
+    model.eval()
+
+    # Stash and later restore states for non-leaky validation
+    cpc.stash_state()
+    model.stash_state()
+
+    # reset to a fixed random seed for determisitic and comparable validation
+    with FixedRandomState(42):
+        for step, batch in enumerate(dataloader):
+            data, labels = batch["data"].to(device), batch["labels"]
+            with torch.no_grad():
+                features = cpc(data)
+                pred = model(features).reshape(-1, num_emotions)
+                labels = labels.reshape(-1)
+                losses.append(F.cross_entropy(pred, labels.to(device)).item())
+            if step >= FLAGS.valid_steps:
+                break
+    cpc.pop_state()
+    model.pop_state()
+
+    model.train()
+    return np.array(losses).mean()
+
+
+# TODO fix
+def validate_filewise(dataloader, cpc, model, num_emotions):
+    logging.info("Starting filewise validation")
+    losses = []
+    frame_preds = []
+    frame_refs = []
+    file_preds = []
+    file_refs = []
+    model.eval()
+
+    # Stash and later restore states for non-leaky validation
+    cpc.stash_state()
+    model.stash_state()
+
+    for i, batch in enumerate(dataloader):
+        data, labels = batch["data"].to(device), batch["labels"].to(device)
+        cpc.reset_state()
+
+        single_file_preds = []
+        data_windows = torch.split(data, FLAGS.window_size, dim=1)
+        label_windows = torch.split(labels, FLAGS.window_size, dim=1)
+        for data_chunk, labels_chunk in zip(data_windows, label_windows):
+            with torch.no_grad():
+                features = cpc(data_chunk)
+                logits = model(features)
+                # get pred
+                pred = logits.argmax(dim=2).squeeze(dim=0)
+                frame_preds.append(pred)
+                single_file_preds.append(pred)
+                labels_chunk = labels_chunk.reshape(-1)
+                frame_refs.append(labels_chunk)
+                # get loss
+                logits = logits.reshape(-1, num_emotions)
+                losses.append(F.cross_entropy(logits, labels_chunk).item())
+
+        counts = np.bincount(torch.cat(single_file_preds, dim=0).cpu().numpy())
+        file_preds.append(np.argmax(counts))
+        file_refs.append(labels.squeeze()[-1].item())
+
+    frame_preds = torch.cat(frame_preds, dim=0).cpu().numpy()
+    frame_refs = torch.cat(frame_refs, dim=0).cpu().numpy()
+    file_preds = np.array(file_preds)
+    file_refs = np.array(file_refs)
+
+    results = {}
+    results["average_loss"] = np.array(losses).mean()
+    emotion2id = dataloader.dataset.get_emotion_to_id_mapping(FLAGS.emotion_set_path)
+
+    for refs, preds, name in zip(
+        [frame_refs, file_refs], [frame_preds, file_preds], ["framewise", "filewise"]
+    ):
+        results[name] = {}
+        results[name]["accuracy"] = accuracy_score(refs, preds)
+        results[name]["average_f1"] = f1_score(refs, preds, average="macro")
+        results[name]["class_f1"] = {}
+        f1_scores = f1_score(refs, preds, average=None)
+        for f1, emotion in zip(f1_scores, emotion2id.keys()):
+            results[name]["class_f1"][emotion] = f1
+
+        cm = confusion_matrix(refs, preds)
+        fig, ax = plt.subplots(figsize=(8, 6), dpi=150)
+        sns.heatmap(cm, annot=True, ax=ax)
+        ax.set_xlabel("Predicted labels")
+        ax.set_ylabel("True labels")
+        results[name]["confusion_matrix"] = fig
+
+    cpc.pop_state()
+    model.pop_state()
+    model.train()
+
+    return results
 
 
 if __name__ == "__main__":

@@ -3,7 +3,6 @@ __pycache__/
 .ipynb_checkpoints
 *.ipynb
 venv/
-dataloader/
 models/
 cpc/scripts
 emotion_id/scripts

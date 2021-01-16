@@ -6,19 +6,12 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 from cpc.model import CPCModel, TrainedCPC
-from dataloader.streaming import (
-    RawStream,
-    FbankStream,
-    DblSampler,
-    DblStream,
-    MultiStreamDataLoader,
-)
+from dataloader.audio import AudioDataset, AudioDataLoader
 from util import (
     set_seeds,
     FixedRandomState,
     device,
     RAdam,
-    parse_audio_dbl,
     mu_law_encoding,
 )
 
@@ -42,19 +35,20 @@ flags.DEFINE_integer("val_every", None, "how often to perform validation")
 flags.DEFINE_integer("save_every", None, "save every n steps")
 flags.DEFINE_integer("log_every", 10, "append to log file every n steps")
 flags.DEFINE_integer("log_tb_every", 50, "save tb scalars every n steps")
+flags.DEFINE_integer("num_workers", 8, "number of workers for dataloader")
 
 flags.mark_flag_as_required("train_data")
 flags.mark_flag_as_required("val_data")
 flags.mark_flag_as_required("expdir")
 
 
-def validation(model, val_datastream, val_steps, features_in):
+def validation(model, val_dataloader, val_steps, features_in):
     model.eval()
     losses = []
     accuracies = []
     hidden = None
     with FixedRandomState(42):
-        for step, val_batch in enumerate(val_datastream):
+        for step, val_batch in enumerate(val_dataloader):
             data = val_batch["data"].to(device)
             if features_in == "raw":
                 data = mu_law_encoding(data.unsqueeze(1))
@@ -88,18 +82,15 @@ def save_models(model, model_out, ext, data=None):
         _ = trained_model(data)
 
 
-def train(model, optimizer, scheduler, train_datastream, val_datastream, FLAGS):
+def train(model, optimizer, scheduler, train_dataloader, val_dataloader, FLAGS):
     model.train()
 
     tb_logger = SummaryWriter(FLAGS.expdir, flush_secs=10)
     best_loss = np.inf
     hidden = None
-    if FLAGS.features_in == "raw":
-        sampling_rate = RawStream.SAMPLING_RATE_HZ
-    elif FLAGS.features_in == "fbank":
-        sampling_rate = FbankStream.SAMPLING_RATE_HZ
+    sampling_rate = train_dataloader.sampling_rate
 
-    for step, train_batch in enumerate(train_datastream):
+    for step, train_batch in enumerate(train_dataloader):
         data = train_batch["data"].to(device)
         if FLAGS.features_in == "raw":
             data = mu_law_encoding(data.unsqueeze(1))
@@ -146,7 +137,7 @@ def train(model, optimizer, scheduler, train_datastream, val_datastream, FLAGS):
 
         if step % FLAGS.val_every == 0 and step != 0:
             val_acc, val_loss = validation(
-                model, val_datastream, FLAGS.val_steps, FLAGS.features_in
+                model, val_dataloader, FLAGS.val_steps, FLAGS.features_in
             )
             logging.info(f"val loss {val_loss:.6f}, val acc {val_acc:.4f}")
             tb_logger.add_scalar("valid/loss", val_loss, global_step)
@@ -206,29 +197,30 @@ def run_cpc(unused_argv):
     scheduler = CosineAnnealingLR(optimizer, FLAGS.steps, eta_min=1e-6)
 
     # dataloaders
-    if FLAGS.features_in == "raw":
-        stream_class = RawStream
-    elif FLAGS.features_in == "fbank":
-        stream_class = FbankStream
-    else:
-        raise (f"Feature input {FLAGS.features_in} has not been implemented")
+    train_dataset = AudioDataset(FLAGS.train_data)
+    train_dataloader = AudioDataLoader(
+        train_dataset,
+        window_size=FLAGS.window_size,
+        batch_size=FLAGS.batch_size,
+        feature_transform=FLAGS.features_in,
+        num_workers=FLAGS.num_workers,
+        shuffle=True,
+        drop_last=True,
+    )
 
-    train_dbl = parse_audio_dbl(FLAGS.train_data)
-    train_streams = [
-        DblStream(DblSampler(train_dbl), stream_class, FLAGS.window_size)
-        for _ in range(FLAGS.batch_size)
-    ]
-    train_datastream = MultiStreamDataLoader(train_streams, device=device)
-
-    val_dbl = parse_audio_dbl(FLAGS.val_data)
-    val_streams = [
-        DblStream(DblSampler(val_dbl), stream_class, FLAGS.window_size)
-        for _ in range(FLAGS.batch_size)
-    ]
-    val_datastream = MultiStreamDataLoader(val_streams, device=device)
+    val_dataset = AudioDataset(FLAGS.val_data)
+    val_dataloader = AudioDataLoader(
+        val_dataset,
+        window_size=FLAGS.window_size,
+        batch_size=FLAGS.batch_size,
+        feature_transform=FLAGS.features_in,
+        num_workers=FLAGS.num_workers,
+        shuffle=False,
+        drop_last=True,
+    )
 
     # start training
-    train(model, optimizer, scheduler, train_datastream, val_datastream, FLAGS)
+    train(model, optimizer, scheduler, train_dataloader, val_dataloader, FLAGS)
 
 
 if __name__ == "__main__":

@@ -22,18 +22,6 @@ def is_non_empty_file(path):
     return path.is_file() and path.stat().st_size != 0
 
 
-def parse_audio_dbl(dbl_path):
-    dbl_entries = []
-    with open(dbl_path) as in_f:
-        for line in in_f.readlines():
-            line = line.strip()
-            if is_non_empty_file(line):
-                dbl_entries.append(line)
-    if not dbl_entries:
-        raise KeyError("dbl list is empty, check paths to dbl files")
-    return dbl_entries
-
-
 def set_seeds(seed=42, fully_deterministic=False):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
