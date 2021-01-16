@@ -2,6 +2,8 @@ import numpy as np
 
 import torch
 from absl import flags, logging, app
+from torch.utils.tensorboard import SummaryWriter
+from torch.optim.lr_scheduler import CosineAnnealingLR
 
 from cpc.model import CPCModel, TrainedCPC
 from dataloader.streaming import (
@@ -13,15 +15,11 @@ from dataloader.streaming import (
 )
 from util import (
     set_seeds,
-    prepare_tb_logging,
-    prepare_standard_logging,
     FixedRandomState,
     device,
     RAdam,
     parse_audio_dbl,
-    FlatCA,
     mu_law_encoding,
-    setup_dry_run,
 )
 
 FLAGS = flags.FLAGS
@@ -33,9 +31,7 @@ flags.DEFINE_string("features_in", "raw", "type of features to run cpc on")
 flags.DEFINE_float("lr", 4e-4, "learning rate")
 flags.DEFINE_integer("steps", 100000, "number of steps to take over streaming dataset")
 flags.DEFINE_integer("val_steps", None, "number of steps to take in validation")
-flags.DEFINE_integer(
-    "batch_size", 32, "batch size, num parallel streams to train on at once"
-)
+flags.DEFINE_integer("batch_size", 32, "batch size, num parallel streams to train on at once")
 flags.DEFINE_integer("window_size", 20480, "num frames to push into model at once")
 flags.DEFINE_integer("timestep", 12, "the number of frames ahead to predict")
 flags.DEFINE_integer("hidden_size", 512, "the hidden layer size of the encoder")
@@ -46,7 +42,6 @@ flags.DEFINE_integer("val_every", None, "how often to perform validation")
 flags.DEFINE_integer("save_every", None, "save every n steps")
 flags.DEFINE_integer("log_every", 10, "append to log file every n steps")
 flags.DEFINE_integer("log_tb_every", 50, "save tb scalars every n steps")
-flags.DEFINE_boolean("dry_run", False, "dry run")
 
 flags.mark_flag_as_required("train_data")
 flags.mark_flag_as_required("val_data")
@@ -96,7 +91,7 @@ def save_models(model, model_out, ext, data=None):
 def train(model, optimizer, scheduler, train_datastream, val_datastream, FLAGS):
     model.train()
 
-    tb_logger = prepare_tb_logging(FLAGS.expdir)
+    tb_logger = SummaryWriter(FLAGS.expdir, flush_secs=10)
     best_loss = np.inf
     hidden = None
     if FLAGS.features_in == "raw":
@@ -132,10 +127,7 @@ def train(model, optimizer, scheduler, train_datastream, val_datastream, FLAGS):
 
         if step % FLAGS.log_every == 0:
             audio_seen_hr = (
-                (step + 1)
-                * FLAGS.batch_size
-                * FLAGS.window_size
-                / (sampling_rate * 3600)
+                (step + 1) * FLAGS.batch_size * FLAGS.window_size / (sampling_rate * 3600)
             )
             logging.info(
                 (
@@ -181,11 +173,6 @@ def run_cpc(unused_argv):
 
     # setup logging
     set_seeds(FLAGS.seed)
-    prepare_standard_logging("training")
-
-    # dry run
-    if FLAGS.dry_run is True:
-        setup_dry_run(FLAGS)
 
     # initialise unset flags
     if not FLAGS.model_out:
@@ -214,13 +201,9 @@ def run_cpc(unused_argv):
         FLAGS.out_size,
         FLAGS.no_gru_layers,
     ).to(device)
-    logging.info(
-        f"param count {sum(p.numel() for p in model.parameters() if p.requires_grad)}"
-    )
+    logging.info(f"param count {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
     optimizer = RAdam(model.parameters(), lr=4e-4)
-    scheduler = FlatCA(
-        optimizer, steps=FLAGS.steps, eta_min=1e-6, decay_proportion=1.0 / 3
-    )
+    scheduler = CosineAnnealingLR(optimizer, FLAGS.steps, eta_min=1e-6)
 
     # dataloaders
     if FLAGS.features_in == "raw":

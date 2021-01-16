@@ -26,9 +26,7 @@ def get_emotion_to_id_mapping(emotion_set_path):
 
 
 class EmotionIDSingleFileStream(SingleFileStream):
-    def __init__(
-        self, dbl_entry, window_size, emotion_set_path, audiostream_class=FbankStream
-    ):
+    def __init__(self, dbl_entry, window_size, emotion_set_path, audiostream_class=FbankStream):
         self.dbl_entry = dbl_entry
         self.audiostream = audiostream_class(dbl_entry.audio_path, window_size)
         self.emotion2id = get_emotion_to_id_mapping(emotion_set_path)
@@ -49,9 +47,7 @@ class EmotionIDSingleFileStream(SingleFileStream):
         return {
             "data": window["data"],
             "labels": emotions,
-            "frame_idx": np.arange(
-                self.frame_count - actual_window_size, self.frame_count
-            ),
+            "frame_idx": np.arange(self.frame_count - actual_window_size, self.frame_count),
         }
 
     def __iter__(self):
@@ -60,3 +56,6 @@ class EmotionIDSingleFileStream(SingleFileStream):
             if window is None:
                 return
             yield window
+
+    def close_handle(self):
+        self.audiostream.close_handle()

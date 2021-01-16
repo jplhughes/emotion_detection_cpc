@@ -46,7 +46,13 @@ class Conv1dMasked(nn.Conv1d):
 
 class ResidualStack(nn.Module):
     def __init__(
-        self, n_residual, n_skip, dilations, kernel_size=3, groups=4, conv_module=Conv1dSamePadding,
+        self,
+        n_residual,
+        n_skip,
+        dilations,
+        kernel_size=3,
+        groups=4,
+        conv_module=Conv1dSamePadding,
     ):
         super().__init__()
         self.resblocks = nn.ModuleList()

@@ -7,9 +7,9 @@ from absl import flags, logging, app
 from torch import save
 import torch.nn.functional as F
 from torch.nn.utils import clip_grad_norm_
+from torch.utils.tensorboard import SummaryWriter
+from torch.optim.lr_scheduler import CosineAnnealingLR
 
-import io
-from PIL import Image
 from sklearn.metrics import (
     confusion_matrix,
     f1_score,
@@ -36,20 +36,11 @@ from cpc.model import NoCPC
 
 from util import (
     set_seeds,
-    prepare_tb_logging,
-    prepare_standard_logging,
     load_model,
     FixedRandomState,
     RAdam,
-    FlatCA,
-    resample_1d,
     device,
-    setup_dry_run,
-    EmptyScheduler,
-    get_checkpoint_to_start_from,
-    write_current_pid,
-    load_checkpoint,
-    dump_checkpoint_on_kill,
+    fig2tensor,
 )
 
 FLAGS = flags.FLAGS
@@ -60,9 +51,6 @@ flags.DEFINE_string("emotion_set_path", None, "path to smotion set")
 
 flags.DEFINE_string("cpc_path", None, "path to cpc model to use")
 flags.DEFINE_string("model_out", None, "path to where to save trained model")
-flags.DEFINE_string("checkpoint", None, "path to loading saved checkpoint")
-flags.DEFINE_string("checkpoint_out", None, "path to save checkpoint")
-flags.DEFINE_boolean("checkpoint_autoload", True, "if True start from latest checkpoint_out")
 flags.DEFINE_enum(
     "model",
     "mlp2",
@@ -82,10 +70,6 @@ flags.DEFINE_integer("valid_steps", None, "number of steps to take in validation
 flags.DEFINE_integer("val_every", None, "how often to perform validation")
 flags.DEFINE_integer("save_every", None, "save every n steps")
 
-flags.DEFINE_boolean(
-    "lr_schedule", False, "state if an learning rate scheduler is required during training",
-)
-flags.DEFINE_boolean("dry_run", False, "dry run")
 flags.DEFINE_boolean("batch_norm", False, "batch_norm")
 
 
@@ -95,17 +79,6 @@ flags.mark_flag_as_required("steps")
 flags.mark_flag_as_required("train_data")
 flags.mark_flag_as_required("val_data")
 flags.mark_flag_as_required("expdir")
-
-
-def fig2tensor(fig):
-    """Convert a Matplotlib figure to a PIL Image and return it"""
-    buf = io.BytesIO()
-    fig.savefig(buf)
-    buf.seek(0)
-    img = Image.open(buf)
-    x = np.array(img)
-    x = torch.Tensor(x).permute(2, 0, 1) / 255.0
-    return x
 
 
 def validate(datastream, cpc, model, num_emotions):
@@ -122,9 +95,7 @@ def validate(datastream, cpc, model, num_emotions):
             data, labels = batch["data"].to(device), batch["labels"]
             with torch.no_grad():
                 features = cpc(data)
-                pred = model(features)
-                labels = resample_1d(labels, pred.shape[1])
-                pred = pred.reshape(-1, num_emotions)
+                pred = model(features).reshape(-1, num_emotions)
                 labels = labels.reshape(-1)
                 losses.append(F.cross_entropy(pred, labels.to(device)).item())
             if step >= FLAGS.valid_steps:
@@ -167,8 +138,6 @@ def validate_filewise(dbl, cpc, model, num_emotions):
                 pred = logits.argmax(dim=2).squeeze(dim=0)
                 frame_preds.append(pred)
                 single_file_preds.append(pred)
-                if logits.shape[1] > 1:
-                    labels = resample_1d(labels, logits.shape[1])
                 labels = labels.reshape(-1)
                 frame_refs.append(labels)
                 # get loss
@@ -215,25 +184,15 @@ def validate_filewise(dbl, cpc, model, num_emotions):
 
 def train(unused_argv):
     set_seeds(FLAGS.seed)
-    write_current_pid(FLAGS.expdir)
     # setup logging
-    tb_logger = prepare_tb_logging()
-    prepare_standard_logging("training")
+    tb_logger = SummaryWriter(FLAGS.expdir, flush_secs=10)
     loss_dir = Path(f"{FLAGS.expdir}/losses")
     loss_dir.mkdir(exist_ok=True)
     train_losses_fh = open(loss_dir / "train.txt", "a", buffering=1)
     valid_losses_fh = open(loss_dir / "valid.txt", "a", buffering=1)
 
-    if FLAGS.dry_run is True:
-        setup_dry_run(FLAGS)
     if not FLAGS.model_out:
         FLAGS.model_out = FLAGS.expdir + "/model.pt"
-    if not FLAGS.checkpoint_out:
-        FLAGS.checkpoint_out = FLAGS.expdir + "/checkpoint.pt"
-
-    if FLAGS.checkpoint_autoload is True and not FLAGS.checkpoint:
-        FLAGS.checkpoint = get_checkpoint_to_start_from(FLAGS.checkpoint_out)
-        logging.info(f"autosetting checkpoint: {FLAGS.checkpoint}")
 
     if FLAGS.cpc_path is not None:
         cpc = load_model(FLAGS.cpc_path).to(device)
@@ -268,7 +227,7 @@ def train(unused_argv):
             EmotionIDSingleFileStream,
             FLAGS.window_size,
             emotion_set_path=FLAGS.emotion_set_path,
-            audiostream_class=cpc.data_class,  # TODO ensure un-augmented stream
+            audiostream_class=cpc.data_class,
         )
         for _ in range(FLAGS.batch_size)
     ]
@@ -347,33 +306,22 @@ def train(unused_argv):
     logging.info(f"model param count {sum(x.numel() for x in model.parameters()):,}")
 
     optimizer = RAdam(model.parameters(), eps=1e-05, lr=FLAGS.lr)
-    if FLAGS.lr_schedule:
-        scheduler = FlatCA(optimizer, steps=FLAGS.steps, eta_min=0)
-    else:
-        scheduler = EmptyScheduler(optimizer)
+    scheduler = CosineAnnealingLR(optimizer, FLAGS.steps, eta_min=1e-6)
 
     step = 0
-    optimizer.best_val_loss = inf
-
-    if FLAGS.checkpoint:
-        # loading state_dicts in-place
-        load_checkpoint(FLAGS.checkpoint, model, optimizer, scheduler=scheduler)
-        step = optimizer.restored_step
-
-    dump_checkpoint_on_kill(model, optimizer, scheduler, FLAGS.checkpoint_out)
-    set_seeds(FLAGS.seed + step)
+    best_val_loss = inf
 
     model.train()
     for batch in train_datastream:
         data, labels = batch["data"].to(device), batch["labels"]
         features = cpc(data)
         pred = model(features)
-        labels = resample_1d(labels, pred.shape[1]).reshape(-1).to(device)
+        labels = labels.reshape(-1).to(device)
 
         # get cross entropy loss against emotion labels and take step
         optimizer.zero_grad()
-        output = model(features).reshape(-1, num_emotions)
-        loss = F.cross_entropy(output, labels)
+        pred = pred.reshape(-1, num_emotions)
+        loss = F.cross_entropy(pred, labels)
         loss.backward()
         clip_grad_norm_(model.parameters(), FLAGS.clip_thresh)
 
@@ -399,7 +347,7 @@ def train(unused_argv):
             valid_losses_fh.write(f"{step}, {valid_loss}\n")
 
             val_results = validate_filewise(parsed_valid_dbl, cpc, model, num_emotions)
-            tb_logger.add_scalar(f"02_valid/full_loss", val_results["average_loss"], step)
+            tb_logger.add_scalar("02_valid/full_loss", val_results["average_loss"], step)
             for name in ["framewise", "filewise"]:
                 cm = fig2tensor(val_results[name]["confusion_matrix"])
                 tb_logger.add_scalar(
@@ -413,10 +361,10 @@ def train(unused_argv):
             for emotion, f1 in val_results["framewise"]["class_f1"].items():
                 tb_logger.add_scalar(f"03_f1/{emotion}", f1, step)
 
-            if valid_loss.item() < optimizer.best_val_loss:
+            if valid_loss.item() < best_val_loss:
                 logging.info("Saving new best validation")
                 save(model, FLAGS.model_out + ".bestval")
-                optimizer.best_val_loss = valid_loss.item()
+                best_val_loss = valid_loss.item()
 
         # save out model periodically
         if step % FLAGS.save_every == 0 and step != 0:

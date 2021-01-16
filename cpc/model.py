@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from dataloader.streaming import RawStream, FbankStream, AugmentStream
+from dataloader.streaming import RawStream, FbankStream
 from util import mu_law_encoding, BatchNorm, device
 
 
@@ -42,24 +42,16 @@ class RawEncoder(nn.Module):
             nn.Conv1d(1, hidden_size, kernel_size=10, stride=5, padding=3, bias=False),
             nn.BatchNorm1d(hidden_size),
             nn.ReLU(inplace=True),
-            nn.Conv1d(
-                hidden_size, hidden_size, kernel_size=8, stride=4, padding=2, bias=False
-            ),
+            nn.Conv1d(hidden_size, hidden_size, kernel_size=8, stride=4, padding=2, bias=False),
             nn.BatchNorm1d(hidden_size),
             nn.ReLU(inplace=True),
-            nn.Conv1d(
-                hidden_size, hidden_size, kernel_size=4, stride=2, padding=1, bias=False
-            ),
+            nn.Conv1d(hidden_size, hidden_size, kernel_size=4, stride=2, padding=1, bias=False),
             nn.BatchNorm1d(hidden_size),
             nn.ReLU(inplace=True),
-            nn.Conv1d(
-                hidden_size, hidden_size, kernel_size=4, stride=2, padding=1, bias=False
-            ),
+            nn.Conv1d(hidden_size, hidden_size, kernel_size=4, stride=2, padding=1, bias=False),
             nn.BatchNorm1d(hidden_size),
             nn.ReLU(inplace=True),
-            nn.Conv1d(
-                hidden_size, hidden_size, kernel_size=4, stride=2, padding=1, bias=False
-            ),
+            nn.Conv1d(hidden_size, hidden_size, kernel_size=4, stride=2, padding=1, bias=False),
             nn.BatchNorm1d(hidden_size),
             nn.ReLU(inplace=True),
         )
@@ -104,9 +96,7 @@ class CPCModel(nn.Module):
             bidirectional=False,
             batch_first=True,
         )
-        self.Wk = nn.ModuleList(
-            [nn.Linear(out_size, hidden_size) for i in range(timestep)]
-        )
+        self.Wk = nn.ModuleList([nn.Linear(out_size, hidden_size) for i in range(timestep)])
         self.softmax = nn.Softmax(dim=1)
         self.lsoftmax = nn.LogSoftmax(dim=1)
 
@@ -150,30 +140,23 @@ class CPCModel(nn.Module):
         c_t = c[:, t, :]  # e.g. 8*256
 
         # infer z_{t+k} for each step in the future: c_t*Wk, where 1 <= k <= timestep
-        pred = torch.stack(
-            [self.Wk[k](c_t) for k in range(self.timestep)]
-        )  # e.g. 12x8*512
+        pred = torch.stack([self.Wk[k](c_t) for k in range(self.timestep)])  # e.g. 12x8*512
 
         # pick the target z values timestep number of samples after t
-        z_samples = z[:, t + 1 : t + 1 + self.timestep, :].permute(
-            1, 0, 2
-        )  # e.g. 12*8*512
+        z_samples = z[:, t + 1 : t + 1 + self.timestep, :].permute(1, 0, 2)  # e.g. 12*8*512
 
         nce = 0
         correct = 0
         for k in range(self.timestep):
             # calculate the log density ratio: log(f_k) = z_{t+k}^T * W_k * c_t
-            log_density_ratio = torch.mm(
-                z_samples[k], pred[k].transpose(0, 1)
-            )  # e.g. size 8*8
+            log_density_ratio = torch.mm(z_samples[k], pred[k].transpose(0, 1))  # e.g. size 8*8
 
             # positive samples will be from the same batch
             # therefore, correct if highest probability is in the diagonal
             positive_batch_pred = torch.argmax(self.softmax(log_density_ratio), dim=0)
             positive_batch_actual = torch.arange(0, self.batch_size).to(device)
             correct = (
-                correct
-                + torch.sum(torch.eq(positive_batch_pred, positive_batch_actual)).item()
+                correct + torch.sum(torch.eq(positive_batch_pred, positive_batch_actual)).item()
             )
 
             # calculate NCE loss
@@ -200,13 +183,10 @@ class TrainedCPC(nn.Module):
     Body wrapper class to wrap a trained cpc body for benchmarking
     """
 
-    def __init__(self, cpc_model, data_augment=False):
+    def __init__(self, cpc_model):
         self.features_in = cpc_model.features_in
         if self.features_in == "raw":
-            if data_augment:
-                data_class = AugmentStream
-            else:
-                data_class = RawStream
+            data_class = RawStream
         elif self.features_in == "fbank":
             data_class = FbankStream
 

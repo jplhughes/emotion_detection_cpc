@@ -1,7 +1,7 @@
 from torch import nn
 from math import ceil
 from emotion_id.wavenet import Conv1dMasked, Conv1dSamePadding, ResidualStack
-from util import GlobalNormalization, BatchNorm
+from util import GlobalNormalization, BatchNorm, Permute
 
 
 class BaseModel:
@@ -222,12 +222,4 @@ class WaveNetEmotionIDModel(nn.Module, BaseModel):
         x = self.normalize(x)
         x = x.permute(0, 2, 1)
         x = self.blocks(x)
-        return x.permute(0, 2, 1)
-
-
-class Permute(nn.Module):
-    def __init__(self,):
-        super().__init__()
-
-    def forward(self, x):
         return x.permute(0, 2, 1)
