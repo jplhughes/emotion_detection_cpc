@@ -10,7 +10,7 @@ from sklearn.metrics import (
 )
 import seaborn as sns
 import matplotlib.pyplot as plt
-from emotion_id.dataset import get_emotion_to_id_mapping
+from dataloader.audio import EmotionDataset
 
 # This scoring assumes only one emotion per file in the reference
 flags.DEFINE_string("ref", None, "Path to reference emotions")
@@ -71,7 +71,7 @@ def overall_stats(ref, pred, emotion_set_path, single=False):
     :param single: If true, paths are to single files (assume they are filelists otherwise)
     :return:
     """
-    emotion2id = get_emotion_to_id_mapping(emotion_set_path)
+    emotion2id = EmotionDataset.get_emotion_to_id_mapping(emotion_set_path)
 
     # prepare files
     if single:

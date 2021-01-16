@@ -88,10 +88,7 @@ def train(model, optimizer, scheduler, train_dataloader, val_dataloader, FLAGS):
     tb_logger = SummaryWriter(FLAGS.expdir, flush_secs=10)
     best_loss = np.inf
     hidden = None
-    if FLAGS.features_in == "raw":
-        sampling_rate = 16000
-    else:
-        sampling_rate = 100
+    sampling_rate = train_dataloader.sampling_rate
 
     for step, train_batch in enumerate(train_dataloader):
         data = train_batch["data"].to(device)
@@ -207,6 +204,8 @@ def run_cpc(unused_argv):
         batch_size=FLAGS.batch_size,
         feature_transform=FLAGS.features_in,
         num_workers=FLAGS.num_workers,
+        shuffle=True,
+        drop_last=True,
     )
 
     val_dataset = AudioDataset(FLAGS.val_data)
@@ -216,6 +215,8 @@ def run_cpc(unused_argv):
         batch_size=FLAGS.batch_size,
         feature_transform=FLAGS.features_in,
         num_workers=FLAGS.num_workers,
+        shuffle=False,
+        drop_last=True,
     )
 
     # start training

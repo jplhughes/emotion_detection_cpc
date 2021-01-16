@@ -5,8 +5,7 @@ import torch
 import warnings
 from absl import flags, app
 
-from emotion_id.dataset import parse_emotion_dbl
-from dataloader.streaming import DblStream, DblSampler
+from dataloader.audio import AudioDataset, AudioDataLoader
 from cpc.model import NoCPC
 from util import load_model, set_seeds, device
 
@@ -53,46 +52,10 @@ def preds_to_output(pred, num_inputs, input_freq_hz, start_time_s):
     return outputs, start_time_s + num_preds * pred_duration_s
 
 
-def decode_emotions_from_file(filename, cpc, model, window_size):
-    datastream = DblStream(
-        DblSampler([filename], loop_data=False),
-        single_file_stream_class=cpc.data_class,
-        window_size=window_size,
-        pad_final=FLAGS.pad_input,
-    )
-    preds = []
-    prev_end_s = 0.0
-    for batch in datastream:
-        data = torch.tensor(batch["data"]).unsqueeze(0).to(device)
-        try:
-            with torch.no_grad():
-                features = cpc(data)
-                pred = model(features).argmax(dim=2).squeeze(dim=0)
-        except RuntimeError as e:
-            # this catches when we don't have enough samples to complete a batch
-            # instead we output default label for that time duration
-            if "Kernel size can't be greater than actual input size" in e.args[0]:
-                pred = torch.ones([1], dtype=torch.int32) * DEFAULT_LABEL
-                warnings.warn(e.args[0])
-            else:
-                raise e
-
-        outputs, prev_end_s = preds_to_output(
-            pred,
-            batch["data"].shape[0],
-            datastream.single_file_stream.SAMPLING_RATE_HZ,
-            prev_end_s,
-        )
-        preds.extend(outputs)
-    return preds
-
-
 def main(unused_argv):
     # create output dirs
     output_dir = Path(FLAGS.output_dir)
     Path.mkdir(output_dir, exist_ok=True)
-
-    decode_dbl = parse_emotion_dbl(FLAGS.eval_file_path)
 
     if FLAGS.cpc_path is not None:
         cpc = load_model(FLAGS.cpc_path).eval().to(device)
@@ -100,12 +63,39 @@ def main(unused_argv):
         cpc = NoCPC().eval().to(device)
     model = load_model(FLAGS.model_path).eval().to(device)
 
+    dataset = AudioDataset(FLAGS.eval_file_path, train=False)
+    dataloader = AudioDataLoader(
+        dataset,
+        window_size=None,
+        batch_size=1,
+        feature_transform=cpc.data_class,
+        num_workers=8,
+        shuffle=False,
+    )
+
     set_seeds()
     # Need the enumeration to ensure unique files
-    for i, dbl_entry in enumerate(decode_dbl):
-        filename = Path(dbl_entry.audio_path)
-        preds = decode_emotions_from_file(filename.as_posix(), cpc, model, FLAGS.window_size)
+    for i, batch in enumerate(dataloader):
+        data = batch["data"].to(device)
+        cpc.reset_state()
 
+        preds = []
+        prev_end_s = 0.0
+        windows = torch.split(data, FLAGS.window_size, dim=1)
+        for window in windows:
+            with torch.no_grad():
+                features = cpc(window)
+                pred = model(features).argmax(dim=2).squeeze(dim=0)
+
+            outputs, prev_end_s = preds_to_output(
+                pred,
+                window.shape[1],
+                dataloader.sampling_rate,
+                prev_end_s,
+            )
+            preds.extend(outputs)
+
+        filename = Path(batch["files"][0])
         with open(str(output_dir / filename.name) + "_" + str(i), "w") as out_f:
             for pred in preds:
                 out_f.write("{:.3f} {:.3f} {}\n".format(pred.start, pred.end, pred.label))

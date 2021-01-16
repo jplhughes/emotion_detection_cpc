@@ -7,10 +7,15 @@ import torchaudio
 from torch.utils.data import DataLoader, Dataset
 from util import is_non_empty_file
 
-TARGET_SAMPLING_RATE = 16000
-
+RAW_SAMPLING_RATE = 16000
 FRAME_LENGTH_MS = 25.0
 FRAME_SHIFT_MS = 10.0
+
+transform_to_sampling_rate = {
+    "mfcc": int(1000 / FRAME_SHIFT_MS),
+    "fbank": int(1000 / FRAME_SHIFT_MS),
+    "raw": RAW_SAMPLING_RATE,
+}
 
 
 class AudioDataLoader(DataLoader):
@@ -29,55 +34,68 @@ class AudioDataLoader(DataLoader):
             self._collate_fn,
             window_size=window_size,
             feature_transform=feature_transform,
+            train=self.dataset.train,
         )
 
+        self.sampling_rate = transform_to_sampling_rate[feature_transform]
+
     @staticmethod
-    def _collate_fn(batch, window_size=256, feature_transform="mfcc", normalization=True):
-        labels = []
-        feats = []
+    def _collate_fn(
+        batch, window_size=256, feature_transform="mfcc", normalization=True, train=True
+    ):
+        feats, labels, files, positions = [], [], [], []
         for path, label in batch:
+            start_idx = 0
             audio_tensor, sample_rate = torchaudio.load(path, normalization=normalization)
-            if sample_rate != TARGET_SAMPLING_RATE:
-                audio_tensor = torchaudio.transforms.Resample(sample_rate, TARGET_SAMPLING_RATE)(
+            if sample_rate != RAW_SAMPLING_RATE:
+                audio_tensor = torchaudio.transforms.Resample(sample_rate, RAW_SAMPLING_RATE)(
                     audio_tensor
                 )
+            # if training slice audio up into window size chunks
+            if train:
+                # find raw audio window size to give correct feature window size
+                if feature_transform != "raw":
+                    seconds_requested = window_size / 100
+                    frame_shift_samples = int((FRAME_SHIFT_MS / 1000.0) * RAW_SAMPLING_RATE)  # 160
+                    frame_length_samples = int(
+                        (FRAME_LENGTH_MS / 1000.0) * RAW_SAMPLING_RATE
+                    )  # 400
+                    buffer_size = frame_length_samples - frame_shift_samples  # 240
+                    raw_window_size = frame_shift_samples * window_size + buffer_size
+                else:
+                    seconds_requested = window_size / RAW_SAMPLING_RATE
+                    raw_window_size = window_size
 
-            # find raw audio window size to give correct feature window size
-            if feature_transform != "raw":
-                seconds_requested = window_size / 100
-                frame_shift_samples = int((FRAME_SHIFT_MS / 1000.0) * TARGET_SAMPLING_RATE)  # 160
-                frame_length_samples = int((FRAME_LENGTH_MS / 1000.0) * TARGET_SAMPLING_RATE)  # 400
-                buffer_size = frame_length_samples - frame_shift_samples  # 240
-                raw_window_size = frame_shift_samples * window_size + buffer_size
+                # pad or splice depending on number on window size
+                channels, num_samples = audio_tensor.shape
+                if num_samples < raw_window_size:
+                    difference = raw_window_size - num_samples
+                    print(
+                        f"requested {seconds_requested}s but only have "
+                        f"{num_samples/RAW_SAMPLING_RATE}s, adding {difference} zero frames"
+                    )
+                    padding = torch.zeros((channels, difference))
+                    audio_tensor = torch.cat([audio_tensor, padding], 1)
+                else:
+                    # TODO this is far from efficient, look into iterable dataset in future
+                    start_idx = random.randint(0, num_samples - raw_window_size)
+                    audio_tensor = audio_tensor.narrow(1, start_idx, raw_window_size)
+            # if testing do not slice up
             else:
-                seconds_requested = window_size / TARGET_SAMPLING_RATE
-                raw_window_size = window_size
+                assert len(batch) == 1
 
-            channels, num_samples = audio_tensor.shape
-
-            if num_samples < raw_window_size:
-                difference = raw_window_size - num_samples
-                print(
-                    f"requested {seconds_requested}s but only have {num_samples/TARGET_SAMPLING_RATE}s, adding {difference}"
-                )
-                padding = torch.zeros((channels, difference))
-                audio_tensor = torch.cat([audio_tensor, padding], 1)
-            else:
-                # TODO this is far from efficient, look into iterable dataset in future
-                random_idx = random.randint(0, num_samples - raw_window_size)
-                audio_tensor = audio_tensor.narrow(1, random_idx, raw_window_size)
-
-            feat = feature_fn(audio_tensor, feature_transform, TARGET_SAMPLING_RATE)
+            feat = feature_fn(audio_tensor, feature_transform, RAW_SAMPLING_RATE)
+            if window_size == None:
+                window_size = feat.shape[0]
             assert feat.shape[0] == window_size
             feats.append(feat)
             labels.append(torch.ones(window_size).long() * label)
+            files.append(path)
+            positions.append(start_idx)
 
         feats = torch.stack(feats)
         labels = torch.stack(labels)
-        return {
-            "data": feats,
-            "labels": labels,
-        }
+        return {"data": feats, "labels": labels, "files": files, "positions": positions}
 
 
 def feature_fn(data_tensor, feature_transform, samplerate):
@@ -89,8 +107,8 @@ def feature_fn(data_tensor, feature_transform, samplerate):
             num_mel_bins=80,
             htk_compat=True,
             use_energy=False,
-            frame_length=25.0,
-            frame_shift=10.0,
+            frame_length=FRAME_LENGTH_MS,
+            frame_shift=FRAME_SHIFT_MS,
             sample_frequency=samplerate,
         )
     elif feature_transform == "mfcc":
